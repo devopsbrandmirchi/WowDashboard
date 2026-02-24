@@ -90,7 +90,7 @@ export const STATIC = {
       { country: '🇬🇧 UK',      spend: 1000, conv: 100, cpa: 10.00, roas: 2.50 },
       { country: '🇫🇷 France',  spend: 400,  conv: 40,  cpa: 10.00, roas: 2.50 },
       { country: '🇩🇪 Germany', spend: 300,  conv: 30,  cpa: 10.00, roas: 2.50 },
-      { country: '🌍 Others',   spend: 300,  conv: 30,  cpa: 10.00, roas: 2.50 },
+      { country: '🌍 Other Countries', spend: 300, conv: 30, cpa: 10.00, roas: 2.50 },
     ],
   },
 };
