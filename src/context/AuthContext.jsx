@@ -1,43 +1,79 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { STATIC_CREDENTIALS, AUTH_STORAGE_KEY } from '../config/auth.js';
+import { supabase } from '../lib/supabase.js';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    try {
-      return localStorage.getItem(AUTH_STORAGE_KEY) === 'true';
-    } catch {
-      return false;
-    }
-  });
+  const [user, setUser] = useState(null);
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const isAuthenticated = !!session;
 
   useEffect(() => {
-    try {
-      if (isAuthenticated) {
-        localStorage.setItem(AUTH_STORAGE_KEY, 'true');
-      } else {
-        localStorage.removeItem(AUTH_STORAGE_KEY);
-      }
-    } catch (_) {}
-  }, [isAuthenticated]);
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      setSession(s);
+      setUser(s?.user ?? null);
+      setLoading(false);
+    });
 
-  const login = useCallback((username, password) => {
-    const ok =
-      String(username).trim() === STATIC_CREDENTIALS.username &&
-      String(password) === STATIC_CREDENTIALS.password;
-    if (ok) {
-      setIsAuthenticated(true);
-      return { success: true };
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
+      setUser(s?.user ?? null);
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const login = useCallback(async (email, password) => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: String(email).trim(),
+      password: String(password),
+    });
+    if (error) {
+      return { success: false, error: error.message };
     }
-    return { success: false, error: 'Invalid username or password' };
+    setSession(data.session);
+    setUser(data.user);
+    return { success: true };
   }, []);
 
-  const logout = useCallback(() => {
-    setIsAuthenticated(false);
+  const signup = useCallback(async (email, password, fullName = '') => {
+    const { data, error } = await supabase.auth.signUp({
+      email: String(email).trim(),
+      password: String(password),
+      options: {
+        data: {
+          full_name: fullName ? String(fullName).trim() : null,
+        },
+      },
+    });
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    setSession(data.session);
+    setUser(data.user);
+    return { success: true };
   }, []);
 
-  const value = { isAuthenticated, login, logout };
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
+    setSession(null);
+    setUser(null);
+  }, []);
+
+  const value = {
+    isAuthenticated,
+    user,
+    session,
+    loading,
+    login,
+    signup,
+    logout,
+  };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

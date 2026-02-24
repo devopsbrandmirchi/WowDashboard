@@ -212,6 +212,30 @@ body {
     background: var(--danger-bg);
     border-radius: var(--radius-sm);
 }
+.auth-switch {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 20px;
+    text-align: center;
+}
+.auth-switch-link {
+    background: none;
+    border: none;
+    color: var(--primary);
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: underline;
+}
+.auth-switch-link:hover {
+    color: var(--primary-dark);
+}
+.signup-success-msg {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+    line-height: 1.5;
+}
 
 /* SIDEBAR */
 .sidebar {

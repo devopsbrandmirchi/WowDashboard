@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import { useApp } from './context/AppContext';
 import { LoginPage } from './pages/LoginPage';
+import { SignupPage } from './pages/SignupPage';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { NotificationContainer } from './components/Notification';
@@ -45,8 +46,9 @@ function CurrentPage() {
 }
 
 export default function App() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, loading } = useAuth();
   const { showNotification } = useApp();
+  const [authView, setAuthView] = useState('login'); // 'login' | 'signup'
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -54,8 +56,25 @@ export default function App() {
     }
   }, [isAuthenticated, showNotification]);
 
+  if (loading) {
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <p className="login-subtitle">Loading…</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
-    return <LoginPage />;
+    if (authView === 'signup') {
+      return (
+        <SignupPage onSwitchToLogin={() => setAuthView('login')} />
+      );
+    }
+    return (
+      <LoginPage onSwitchToSignup={() => setAuthView('signup')} />
+    );
   }
 
   return (

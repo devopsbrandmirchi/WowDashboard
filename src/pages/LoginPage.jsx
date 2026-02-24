@@ -1,18 +1,24 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 
-export function LoginPage() {
+export function LoginPage({ onSwitchToSignup }) {
   const { login } = useAuth();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    const result = login(username, password);
-    if (result.success) return;
-    setError(result.error || 'Login failed');
+    setSubmitting(true);
+    try {
+      const result = await login(email, password);
+      if (result.success) return;
+      setError(result.error || 'Login failed');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -22,14 +28,15 @@ export function LoginPage() {
         <p className="login-subtitle">Sign in to your reporting suite</p>
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="settings-form-group">
-            <label htmlFor="login-username">Username</label>
+            <label htmlFor="login-email">Email</label>
             <input
-              id="login-username"
-              type="text"
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Username"
+              id="login-email"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              required
             />
           </div>
           <div className="settings-form-group">
@@ -41,12 +48,33 @@ export function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Password"
+              required
             />
           </div>
-          <button type="submit" className="btn btn-primary btn-login">
-            Sign in
+          <button
+            type="submit"
+            className="btn btn-primary btn-login"
+            disabled={submitting}
+          >
+            {submitting ? 'Signing in…' : 'Sign in'}
           </button>
-          {error && <div className="login-error" role="alert">{error}</div>}
+          {error && (
+            <div className="login-error" role="alert">
+              {error}
+            </div>
+          )}
+          {onSwitchToSignup && (
+            <p className="auth-switch">
+              Don&apos;t have an account?{' '}
+              <button
+                type="button"
+                className="auth-switch-link"
+                onClick={onSwitchToSignup}
+              >
+                Create account
+              </button>
+            </p>
+          )}
         </form>
       </div>
     </div>
