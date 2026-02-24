@@ -8,6 +8,7 @@ const TABS = [
   { id: 'adgroups', label: 'Ad Groups' },
   { id: 'keywords', label: 'Keywords' },
   { id: 'searchterms', label: 'Search Terms' },
+  { id: 'geo', label: 'Geo' },
   { id: 'conversions', label: 'Conversions' },
 ];
 
@@ -269,6 +270,50 @@ export function GoogleAdsPage() {
                       <td className="text-right">{formatCurrency(kw.revenue)}</td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {activeTab === 'geo' && (
+            <div className="table-wrapper">
+              <table className="data-table gads-table">
+                <thead>
+                  <tr>
+                    <th>Country</th>
+                    <th className="text-right">Spend</th>
+                    <th className="text-right">Conv.</th>
+                    <th className="text-right">CPA</th>
+                    <th className="text-right">ROAS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.geography.map((g) => {
+                    const roasClass = g.roas >= 2 ? 'badge-green' : g.roas >= 1 ? 'badge-yellow' : 'badge-red';
+                    return (
+                      <tr key={g.country}>
+                        <td>{g.country}</td>
+                        <td className="text-right">{formatCurrency(g.spend)}</td>
+                        <td className="text-right">{formatNumber(g.conv)}</td>
+                        <td className="text-right">{formatCurrency2(g.cpa)}</td>
+                        <td className="text-right"><span className={`badge ${roasClass}`}>{formatDec(g.roas, 2)}x</span></td>
+                      </tr>
+                    );
+                  })}
+                  {(() => {
+                    const totSpend = d.geography.reduce((s, g) => s + g.spend, 0);
+                    const totConv = d.geography.reduce((s, g) => s + g.conv, 0);
+                    const totCpa = totConv > 0 ? totSpend / totConv : 0;
+                    const totRoas = totSpend > 0 ? d.geography.reduce((s, g) => s + g.roas * g.spend, 0) / totSpend : 0;
+                    return (
+                      <tr className="total-row gads-type-total-row">
+                        <td><strong>Total</strong></td>
+                        <td className="text-right"><strong>{formatCurrency(totSpend)}</strong></td>
+                        <td className="text-right"><strong>{formatNumber(totConv)}</strong></td>
+                        <td className="text-right"><strong>{formatCurrency2(totCpa)}</strong></td>
+                        <td className="text-right"><strong>{formatDec(totRoas, 2)}x</strong></td>
+                      </tr>
+                    );
+                  })()}
                 </tbody>
               </table>
             </div>
