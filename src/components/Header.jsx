@@ -40,13 +40,15 @@ export function Header() {
           onClick={collapseSidebar}
           title="Toggle sidebar"
         >
-          ◀
+          <svg className="collapse-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
         </button>
         <h1 id="headerTitle">{headerTitle}</h1>
       </div>
       <div className="header-right">
         <div className="header-filters" id="headerFilters">
-          <span id="sb-sync-badge" style={{ color: '#10b981', fontSize: 11, fontWeight: 600 }}>Live</span>
+          <span id="sb-sync-badge" style={{ color: 'var(--accent)', fontSize: 11, fontWeight: 600 }}>Live</span>
         </div>
         <button type="button" className="btn btn-outline" onClick={handleExportPDF}>↓ Export PDF</button>
         <button type="button" className="btn btn-primary" onClick={handleShare}>Share Report</button>
