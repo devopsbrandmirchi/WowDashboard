@@ -46,15 +46,6 @@ export function Header() {
       </div>
       <div className="header-right">
         <div className="header-filters" id="headerFilters">
-          <select id="sb-customer-select">
-            <option value="ALL">All Customers</option>
-          </select>
-          <select id="sb-date-range-select">
-            <option value="all" defaultValue>All Data</option>
-            <option value="7">Last 7 Days</option>
-            <option value="14">Last 14 Days</option>
-            <option value="30">Last 30 Days</option>
-          </select>
           <span id="sb-sync-badge" style={{ color: '#10b981', fontSize: 11, fontWeight: 600 }}>Live</span>
         </div>
         <button type="button" className="btn btn-outline" onClick={handleExportPDF}>↓ Export PDF</button>
