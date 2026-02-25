@@ -83,6 +83,10 @@ export function useGoogleAdsData() {
     setFilters((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  const batchUpdateFilters = useCallback((updates) => {
+    setFilters((prev) => ({ ...prev, ...updates }));
+  }, []);
+
   const fetchData = useCallback(async () => {
     const f = filtersRef.current;
     setLoading(true);
@@ -180,12 +184,13 @@ export function useGoogleAdsData() {
 
   const kpis = useMemo(() => {
     if (!rawCampaigns.length) return null;
-    const k = { cost: 0, clicks: 0, impressions: 0, conversions: 0, allConversions: 0, interactions: 0, phoneCalls: 0 };
+    const k = { cost: 0, clicks: 0, impressions: 0, conversions: 0, conversions_value: 0, allConversions: 0, interactions: 0, phoneCalls: 0 };
     rawCampaigns.forEach((r) => {
       k.cost += costFromMicros(r.cost_micros);
       k.clicks += num(r.clicks);
       k.impressions += num(r.impressions);
       k.conversions += num(r.conversions);
+      k.conversions_value += num(r.conversions_value);
       k.allConversions += num(r.all_conversions);
       k.interactions += num(r.interactions);
       k.phoneCalls += num(r.phone_calls);
@@ -194,6 +199,7 @@ export function useGoogleAdsData() {
     k.cpc = k.clicks ? k.cost / k.clicks : 0;
     k.conv_rate = k.clicks ? (k.conversions / k.clicks) * 100 : 0;
     k.cpa = k.conversions ? k.cost / k.conversions : 0;
+    k.roas = k.cost ? k.conversions_value / k.cost : 0;
     k.campaigns = new Set(rawCampaigns.map((r) => r.campaign_id)).size;
     return k;
   }, [rawCampaigns]);
@@ -229,26 +235,47 @@ export function useGoogleAdsData() {
   }, [rawCampaigns]);
 
   const adGroupsAgg = useMemo(() => {
+    const campaignNameMap = new Map();
+    rawCampaigns.forEach((r) => { if (r.campaign_id && r.campaign_name) campaignNameMap.set(String(r.campaign_id), r.campaign_name); });
+
     const map = new Map();
     rawAdGroups.forEach((r) => {
       const id = r.ad_group_id;
-      if (!map.has(id)) map.set(id, { ad_group_id: id, ad_group_name: r.ad_group_name, campaign_name: r.campaign_name, campaign_id: r.campaign_id, ad_group_status: r.ad_group_status, cost: 0, clicks: 0, impressions: 0, conversions: 0 });
-      const a = map.get(id);
-      a.cost += costFromMicros(r.cost_micros); a.clicks += num(r.clicks); a.impressions += num(r.impressions);
-    });
-    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [rawAdGroups]);
-
-  const keywordsAgg = useMemo(() => {
-    const map = new Map();
-    rawKeywords.forEach((r) => {
-      const id = r.criterion_id;
-      if (!map.has(id)) map.set(id, { criterion_id: id, keyword_text: r.keyword_text, keyword_match_type: r.keyword_match_type, criterion_status: r.criterion_status, campaign_id: r.campaign_id, ad_group_id: r.ad_group_id, cost: 0, clicks: 0, impressions: 0, conversions: 0 });
+      if (!map.has(id)) map.set(id, {
+        ad_group_id: id, ad_group_name: r.ad_group_name,
+        campaign_name: r.campaign_name || campaignNameMap.get(String(r.campaign_id)) || '',
+        campaign_id: r.campaign_id, ad_group_status: r.ad_group_status,
+        cost: 0, clicks: 0, impressions: 0, conversions: 0,
+      });
       const a = map.get(id);
       a.cost += costFromMicros(r.cost_micros); a.clicks += num(r.clicks); a.impressions += num(r.impressions); a.conversions += num(r.conversions);
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [rawKeywords]);
+  }, [rawAdGroups, rawCampaigns]);
+
+  const keywordsAgg = useMemo(() => {
+    const campaignNameMap = new Map();
+    rawCampaigns.forEach((r) => { if (r.campaign_id && r.campaign_name) campaignNameMap.set(String(r.campaign_id), r.campaign_name); });
+
+    const adGroupNameMap = new Map();
+    rawAdGroups.forEach((r) => { if (r.ad_group_id && r.ad_group_name) adGroupNameMap.set(String(r.ad_group_id), r.ad_group_name); });
+
+    const map = new Map();
+    rawKeywords.forEach((r) => {
+      const id = `${r.ad_group_id}_${r.criterion_id}`;
+      if (!map.has(id)) map.set(id, {
+        _key: id, criterion_id: r.criterion_id, keyword_text: r.keyword_text,
+        keyword_match_type: r.keyword_match_type, criterion_status: r.criterion_status,
+        campaign_id: r.campaign_id, ad_group_id: r.ad_group_id,
+        campaign_name: campaignNameMap.get(String(r.campaign_id)) || '',
+        ad_group_name: adGroupNameMap.get(String(r.ad_group_id)) || '',
+        cost: 0, clicks: 0, impressions: 0, conversions: 0,
+      });
+      const a = map.get(id);
+      a.cost += costFromMicros(r.cost_micros); a.clicks += num(r.clicks); a.impressions += num(r.impressions); a.conversions += num(r.conversions);
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [rawKeywords, rawCampaigns, rawAdGroups]);
 
   const geoAgg = useMemo(() => {
     const map = new Map();
@@ -278,12 +305,13 @@ export function useGoogleAdsData() {
 
   const compareKpis = useMemo(() => {
     if (!rawCompareCampaigns.length) return null;
-    const k = { cost: 0, clicks: 0, impressions: 0, conversions: 0, allConversions: 0, interactions: 0, phoneCalls: 0 };
+    const k = { cost: 0, clicks: 0, impressions: 0, conversions: 0, conversions_value: 0, allConversions: 0, interactions: 0, phoneCalls: 0 };
     rawCompareCampaigns.forEach((r) => {
       k.cost += costFromMicros(r.cost_micros);
       k.clicks += num(r.clicks);
       k.impressions += num(r.impressions);
       k.conversions += num(r.conversions);
+      k.conversions_value += num(r.conversions_value);
       k.allConversions += num(r.all_conversions);
       k.interactions += num(r.interactions);
       k.phoneCalls += num(r.phone_calls);
@@ -292,6 +320,7 @@ export function useGoogleAdsData() {
     k.cpc = k.clicks ? k.cost / k.clicks : 0;
     k.conv_rate = k.clicks ? (k.conversions / k.clicks) * 100 : 0;
     k.cpa = k.conversions ? k.cost / k.conversions : 0;
+    k.roas = k.cost ? k.conversions_value / k.cost : 0;
     k.campaigns = new Set(rawCompareCampaigns.map((r) => r.campaign_id)).size;
     return k;
   }, [rawCompareCampaigns]);
@@ -309,7 +338,7 @@ export function useGoogleAdsData() {
   }, [rawCompareCampaigns]);
 
   return {
-    filters, updateFilter, fetchData,
+    filters, updateFilter, batchUpdateFilters, fetchData,
     loading, error, customers, channelTypes,
     kpis, compareKpis, campaignTypes: campaignTypesAgg, campaigns: campaignsAgg,
     adGroups: adGroupsAgg, keywords: keywordsAgg,

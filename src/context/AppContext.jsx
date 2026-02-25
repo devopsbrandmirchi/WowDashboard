@@ -19,15 +19,15 @@ export function AppProvider({ children }) {
   const [currentClient, setCurrentClient] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [branding, setBranding] = useState(() => ({
-    agencyName: localStorage.getItem(STORAGE_KEYS.agencyName) || 'AgencyName',
-    agencyLogo: localStorage.getItem(STORAGE_KEYS.agencyLogo) || 'A',
+    agencyName: localStorage.getItem(STORAGE_KEYS.agencyName) || 'chipper',
+    agencyLogo: localStorage.getItem(STORAGE_KEYS.agencyLogo) || 'DIGITAL',
   }));
   const [colors, setColors] = useState(() => {
     const root = typeof document !== 'undefined' ? document.documentElement : null;
-    const primary = localStorage.getItem(STORAGE_KEYS.primaryColor) || '#ff0000';
-    const accent = localStorage.getItem(STORAGE_KEYS.accentColor) || '#10B981';
-    const warning = localStorage.getItem(STORAGE_KEYS.warningColor) || '#F59E0B';
-    const danger = localStorage.getItem(STORAGE_KEYS.dangerColor) || '#EF4444';
+    const primary = localStorage.getItem(STORAGE_KEYS.primaryColor) || '#ED1C24';
+    const accent = localStorage.getItem(STORAGE_KEYS.accentColor) || '#2E9E40';
+    const warning = localStorage.getItem(STORAGE_KEYS.warningColor) || '#F5A623';
+    const danger = localStorage.getItem(STORAGE_KEYS.dangerColor) || '#ED1C24';
     if (root) {
       root.style.setProperty('--primary', primary);
       root.style.setProperty('--accent', accent);
@@ -99,17 +99,17 @@ export function AppProvider({ children }) {
 
   const resetSettings = useCallback(() => {
     Object.values(STORAGE_KEYS).forEach((k) => localStorage.removeItem(k));
-    setBranding({ agencyName: 'AgencyName', agencyLogo: 'A' });
+    setBranding({ agencyName: 'chipper', agencyLogo: 'DIGITAL' });
     setColors({
-      primary: '#ff0000',
-      accent: '#10B981',
-      warning: '#F59E0B',
-      danger: '#EF4444',
+      primary: '#ED1C24',
+      accent: '#2E9E40',
+      warning: '#F5A623',
+      danger: '#ED1C24',
     });
-    document.documentElement.style.setProperty('--primary', '#ff0000');
-    document.documentElement.style.setProperty('--accent', '#10B981');
-    document.documentElement.style.setProperty('--warning', '#F59E0B');
-    document.documentElement.style.setProperty('--danger', '#EF4444');
+    document.documentElement.style.setProperty('--primary', '#ED1C24');
+    document.documentElement.style.setProperty('--accent', '#2E9E40');
+    document.documentElement.style.setProperty('--warning', '#F5A623');
+    document.documentElement.style.setProperty('--danger', '#ED1C24');
     showNotification('Settings reset.');
     setTimeout(() => window.location.reload(), 500);
   }, [showNotification]);
