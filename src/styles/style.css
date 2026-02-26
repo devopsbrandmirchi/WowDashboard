@@ -143,6 +143,77 @@ body {
 .app-layout { display: flex; min-height: 100vh; }
 
 /* ============================================
+   LOGIN / AUTH
+   ============================================ */
+.login-page {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: var(--bg-secondary);
+}
+
+.login-card {
+    width: 100%;
+    max-width: 400px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 32px;
+    box-shadow: var(--shadow-md);
+}
+
+.login-card h1 {
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--navy);
+    letter-spacing: -0.5px;
+    margin-bottom: 4px;
+}
+
+.login-subtitle {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-bottom: 1.5rem;
+}
+
+.login-form {
+    margin-top: 1.5rem;
+}
+
+.login-form .settings-form-group {
+    margin-bottom: 16px;
+}
+
+.login-error {
+    color: var(--danger);
+    font-size: 13px;
+    margin-top: 0.75rem;
+}
+
+.auth-switch {
+    margin-top: 1rem;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.auth-switch-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--primary);
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.auth-switch-link:hover {
+    text-decoration: underline;
+}
+
+/* ============================================
    SIDEBAR
    ============================================ */
 .sidebar {
