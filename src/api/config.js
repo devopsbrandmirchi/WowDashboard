@@ -1,7 +1,8 @@
 /**
- * API configuration. Update baseURL when backend is connected.
+ * API configuration. Set VITE_API_URL in .env or baseURL here when backend is connected.
+ * Used by Meta Report (facebook_campaigns/statistics/campaign).
  */
 export const API_CONFIG = {
-  baseURL: '', // e.g. 'https://your-api.com' when backend is ready
+  baseURL: import.meta.env.VITE_API_URL || '', // e.g. 'https://your-api.com'
   timeout: 15000,
 };
