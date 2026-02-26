@@ -386,9 +386,11 @@ body {
 .main-content {
     margin-left: var(--sidebar-width);
     flex: 1;
+    min-width: 0;
     min-height: 100vh;
     transition: margin-left 0.25s ease;
     background: var(--bg-secondary);
+    overflow-x: hidden;
 }
 
 .sidebar.collapsed ~ .main-content { margin-left: 62px; }
@@ -1964,6 +1966,27 @@ body {
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
+}
+
+/* Meta report: no page-level horizontal scroll (match Google Ads behavior) */
+#page-meta-report .page-content {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+}
+#page-meta-report .table-wrapper {
+    min-width: 0;
+}
+#page-meta-report .gads-chart-section,
+#page-meta-report .gads-chart-wrap {
+    min-width: 0;
+    max-width: 100%;
+}
+#page-meta-report #meta-tab-content,
+#page-meta-report .panel,
+#page-meta-report .panel-body {
+    min-width: 0;
 }
 
 .table-wrapper::-webkit-scrollbar { height: 5px; }
