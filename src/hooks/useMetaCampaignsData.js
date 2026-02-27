@@ -3,19 +3,32 @@ import { supabase } from '../lib/supabase';
 
 const PAGE_SIZE = 1000;
 
-/** Fetch ALL rows for the date range (no cap) so full data is processed */
-async function fetchAllRows(queryFactory) {
-  const results = [];
-  let offset = 0;
-  while (true) {
-    const { data, error } = await queryFactory().range(offset, offset + PAGE_SIZE - 1);
-    if (error) throw error;
-    if (!data || data.length === 0) break;
-    results.push(...data);
-    if (data.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
+/** * OPTIMIZATION 1: Concurrent Pagination
+ * Asks DB for total count, then fires all page requests simultaneously.
+ * Passes columns and options back into the factory so .select() is called FIRST.
+ */
+async function fetchAllRowsConcurrently(queryFactory, columns = '*') {
+  // 1. Ask DB exactly how many rows exist (head: true means don't return rows, just the count)
+  const { count, error: countError } = await queryFactory(columns, { count: 'exact', head: true });
+  if (countError) throw countError;
+  if (!count || count === 0) return [];
+
+  // 2. Generate all page requests in parallel
+  const pages = Math.ceil(count / PAGE_SIZE);
+  const promises = [];
+  for (let i = 0; i < pages; i++) {
+    const offset = i * PAGE_SIZE;
+    promises.push(
+      queryFactory(columns, {}).range(offset, offset + PAGE_SIZE - 1)
+    );
   }
-  return results;
+
+  // 3. Resolve all network requests at the exact same time
+  const responses = await Promise.all(promises);
+  return responses.flatMap(res => {
+    if (res.error) throw res.error;
+    return res.data || [];
+  });
 }
 
 function computeDateRange(preset, customFrom, customTo) {
@@ -37,7 +50,6 @@ function computeDateRange(preset, customFrom, customTo) {
 
 function num(v) { return Number(v) || 0; }
 
-/** Normalize date to YYYY-MM-DD so dayMap keys match calendar days (Supabase may return ISO with time) */
 function toDayKey(v) {
   if (v == null || v === '') return null;
   if (typeof v === 'string' && v.length >= 10 && v[4] === '-' && v[7] === '-') return v.slice(0, 10);
@@ -46,7 +58,6 @@ function toDayKey(v) {
   return d.toISOString().slice(0, 10);
 }
 
-/** Generate all calendar days between from and to (YYYY-MM-DD), using local date so timezone doesn't collapse days */
 function calendarDays(from, to) {
   if (!from || !to) return [];
   const out = [];
@@ -68,7 +79,6 @@ function calendarDays(from, to) {
 
 const DATE_COL = 'day';
 
-/** Add derived metrics to a row */
 function addMetrics(o) {
   const cost = o.cost;
   const impressions = o.impressions;
@@ -81,7 +91,6 @@ function addMetrics(o) {
   return o;
 }
 
-/** Normalize one raw DB row (inline for speed) */
 function normalizeRow(r) {
   const revenue = num(r.purchases_value) + num(r.inapp_purchases_value) + num(r.direct_website_purchases_value);
   return {
@@ -108,24 +117,19 @@ function normalizeRow(r) {
 
 export function useMetaCampaignsData() {
   const [filters, setFilters] = useState({
-    datePreset: 'last30',
-    dateFrom: '',
-    dateTo: '',
-    compareOn: false,
-    compareFrom: '',
-    compareTo: '',
-    customerId: 'ALL',
-    productType: 'all',
-    deliveryStatus: 'all',
-    campaignSearch: '',
-    adGroupSearch: '',
-    keywordSearch: '',
+    datePreset: 'last30', dateFrom: '', dateTo: '',
+    compareOn: false, compareFrom: '', compareTo: '',
+    customerId: 'ALL', productType: 'all', deliveryStatus: 'all',
+    campaignSearch: '', adGroupSearch: '', keywordSearch: '',
   });
 
   const [rawRows, setRawRows] = useState([]);
   const [dateRange, setDateRange] = useState({ from: null, to: null });
-  const [campaignRef, setCampaignRef] = useState([]);
-  const [adsetRef, setAdsetRef] = useState([]);
+  
+  // OPTIMIZATION 3: Cache reference data so we don't re-download it on every filter/date change
+  const [campaignRef, setCampaignRef] = useState(null);
+  const [adsetRef, setAdsetRef] = useState(null);
+  
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const filtersRef = useRef(filters);
@@ -155,28 +159,61 @@ export function useMetaCampaignsData() {
       }
       setDateRange({ from, to });
 
-      const dataQuery = () =>
-        supabase
+      // Accept columns and options so .select() executes before .gte()
+      const buildDataQuery = (columns = '*', options = {}) => {
+        let q = supabase
           .from('facebook_campaigns_data')
-          .select('*')
+          .select(columns, options) // <--- Fix: .select() must be called before filters
           .gte(DATE_COL, from)
-          .lte(DATE_COL, to)
-          .order(DATE_COL, { ascending: false });
+          .lte(DATE_COL, to);
 
-      const refCampaign = () => supabase.from('facebook_campaigns_reference_data').select('campaign_id,campaign_name,country,product_type,showname');
-      const refAdset = () => supabase.from('facebook_adset_reference_data').select('adset_name,country,product_type');
+        // Don't order if we are just doing a HEAD request for the count
+        if (!options.head) {
+          q = q.order(DATE_COL, { ascending: false });
+        }
 
-      const [dataRows, refCampaignRes, refAdsetRes] = await Promise.all([
-        fetchAllRows(dataQuery),
-        fetchAllRows(refCampaign).catch(() => []),
-        fetchAllRows(refAdset).catch(() => []),
-      ]);
+        if (f.customerId !== 'ALL') q = q.eq('account_id', f.customerId);
+        if (f.deliveryStatus !== 'all') q = q.eq('delivery_status', f.deliveryStatus);
+        if ((f.campaignSearch || '').trim()) q = q.ilike('campaign_name', `%${f.campaignSearch.trim()}%`);
+        if ((f.adGroupSearch || '').trim()) q = q.ilike('adset_name', `%${f.adGroupSearch.trim()}%`);
+        if ((f.keywordSearch || '').trim()) q = q.ilike('ad_name', `%${f.keywordSearch.trim()}%`);
+        
+        return q;
+      };
+
+      /** * OPTIMIZATION 2: Column Whitelisting
+       * Prevents transferring bloated JSON configuration payloads native to Facebook APIs 
+       */
+      const DATA_COLUMNS = 'account_id, delivery_status, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, placement, day, platform, device_platform, impressions, reach, clicks_all, amount_spent_usd, purchases, meta_purchases, purchases_value, inapp_purchases_value, direct_website_purchases_value';
+
+      const fetches = [
+        fetchAllRowsConcurrently(buildDataQuery, DATA_COLUMNS)
+      ];
+      
+      // Update reference fetchers to accept the new (columns, options) pattern
+      if (!campaignRef) {
+        fetches.push(fetchAllRowsConcurrently(
+          (cols = '*', opts = {}) => supabase.from('facebook_campaigns_reference_data').select(cols, opts), 
+          'campaign_id,campaign_name,country,product_type,showname'
+        ));
+      }
+      if (!adsetRef) {
+        fetches.push(fetchAllRowsConcurrently(
+          (cols = '*', opts = {}) => supabase.from('facebook_adset_reference_data').select(cols, opts), 
+          'adset_name,country,product_type'
+        ));
+      }
+
+      const results = await Promise.all(fetches);
+      const dataRows = results[0];
+      
+      if (!campaignRef && results[1]) setCampaignRef(results[1]);
+      if (!adsetRef && results[2]) setAdsetRef(results[2]);
 
       const normalized = [];
       for (let i = 0; i < dataRows.length; i++) normalized.push(normalizeRow(dataRows[i]));
       setRawRows(normalized);
-      setCampaignRef(refCampaignRes || []);
-      setAdsetRef(refAdsetRes || []);
+      
     } catch (err) {
       console.error('Meta fetch error:', err);
       const msg = err.message || 'Failed to fetch data';
@@ -185,11 +222,10 @@ export function useMetaCampaignsData() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [campaignRef, adsetRef]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  /** Reference map keyed by campaign_name (primary) and campaign_id when present. Shows, Country, Product come from here. */
   const campaignRefMap = useMemo(() => {
     const m = new Map();
     const arr = campaignRef || [];
@@ -204,244 +240,163 @@ export function useMetaCampaignsData() {
     return m;
   }, [campaignRef]);
 
-  /** Apply Customer, Type, Status, Campaign, Ad Group, Keyword filters */
+  /** OPTIMIZATION 4: Local filter only runs on Product Type because Supabase handles the rest */
   const filteredRows = useMemo(() => {
-    const f = filters;
-    const rows = rawRows;
-    const refMap = campaignRefMap;
-    const custOk = f.customerId === 'ALL';
-    const statusOk = f.deliveryStatus === 'all';
-    const campaignTerm = (f.campaignSearch || '').trim().toLowerCase();
-    const adGroupTerm = (f.adGroupSearch || '').trim().toLowerCase();
-    const keywordTerm = (f.keywordSearch || '').trim().toLowerCase();
-    const productOk = f.productType === 'all';
+    if (filters.productType === 'all') return rawRows; 
+
     const out = [];
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
-      if (!custOk && String(r.account_id) !== f.customerId) continue;
-      if (!statusOk && (r.delivery_status || '') !== f.deliveryStatus) continue;
-      if (campaignTerm && (r.campaign_name || '').toLowerCase().includes(campaignTerm) === false) continue;
-      if (adGroupTerm && (r.adset_name || '').toLowerCase().includes(adGroupTerm) === false) continue;
-      if (keywordTerm && (r.ad_name || '').toLowerCase().includes(keywordTerm) === false) continue;
-      if (!productOk) {
-        const ref = refMap.get(String(r.campaign_id)) || (r.campaign_name ? refMap.get((r.campaign_name || '').trim()) : null);
-        const pt = (ref && ref.product_type) ? ref.product_type : '';
-        if (pt !== f.productType) continue;
-      }
-      out.push(r);
+    for (let i = 0; i < rawRows.length; i++) {
+      const r = rawRows[i];
+      const ref = campaignRefMap.get(String(r.campaign_id)) || (r.campaign_name ? campaignRefMap.get((r.campaign_name || '').trim()) : null);
+      const pt = (ref && ref.product_type) ? ref.product_type : '';
+      if (pt === filters.productType) out.push(r);
     }
     return out;
-  }, [rawRows, campaignRefMap, filters]);
+  }, [rawRows, campaignRefMap, filters.productType]);
 
-  /** Single-pass aggregation: build all tab datasets from filteredRows */
-  const aggregated = useMemo(() => {
-    const campaignMap = new Map();
-    const adSetMap = new Map();
-    const placementMap = new Map();
-    const dayMap = new Map();
-    const adMap = new Map();
-    const platformMap = new Map();
-    const deviceMap = new Map();
-    const countryMap = new Map();
-    const productMap = new Map();
-    const showMap = new Map();
+  const getRef = useCallback((r) => {
+    const cid = r.campaign_id != null ? String(r.campaign_id) : '(not set)';
+    const nameKey = (r.campaign_name || '').trim();
+    return campaignRefMap.get(cid) || (nameKey ? campaignRefMap.get(nameKey) : null);
+  }, [campaignRefMap]);
 
-    const rows = filteredRows;
-    const refMap = campaignRefMap;
-
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
-
+  /** * OPTIMIZATION 5: Splitting Aggregations
+   * Instead of one massive CPU-blocking function, split them into isolated useMemo blocks
+   */
+  const campaigns = useMemo(() => {
+    const map = new Map();
+    filteredRows.forEach(r => {
       const cid = r.campaign_id != null ? String(r.campaign_id) : '(not set)';
-      const nameKey = (r.campaign_name || '').trim();
-      const ref = refMap.get(cid) || (nameKey ? refMap.get(nameKey) : null);
-      const campaignName = (ref && ref.campaign_name) ? ref.campaign_name : (r.campaign_name || cid);
-      let a = campaignMap.get(cid);
-      if (!a) { a = { key: cid, name: campaignName, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 }; campaignMap.set(cid, a); }
-      a.impressions += r.impressions;
-      a.reach += r.reach;
-      a.clicks += r.clicks;
-      a.cost += r.cost;
-      a.purchases += r.purchases;
-      a.revenue += r.revenue;
+      const ref = getRef(r);
+      const name = (ref && ref.campaign_name) ? ref.campaign_name : (r.campaign_name || cid);
+      if (!map.has(cid)) map.set(cid, { key: cid, name, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = map.get(cid);
+      a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [filteredRows, getRef]);
 
+  const adSets = useMemo(() => {
+    const map = new Map();
+    filteredRows.forEach(r => {
       const asid = r.adset_id != null ? String(r.adset_id) : (r.adset_name || '(not set)');
       const asName = r.adset_name || asid;
-      a = adSetMap.get(asid);
-      if (!a) { a = { key: asid, name: asName, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 }; adSetMap.set(asid, a); }
-      a.impressions += r.impressions;
-      a.reach += r.reach;
-      a.clicks += r.clicks;
-      a.cost += r.cost;
-      a.purchases += r.purchases;
-      a.revenue += r.revenue;
+      if (!map.has(asid)) map.set(asid, { key: asid, name: asName, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = map.get(asid);
+      a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [filteredRows]);
 
+  const placements = useMemo(() => {
+    const map = new Map();
+    filteredRows.forEach(r => {
       const pkey = r.placement != null && r.placement !== '' ? String(r.placement) : '(not set)';
-      a = placementMap.get(pkey);
-      if (!a) { a = { key: pkey, name: pkey, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 }; placementMap.set(pkey, a); }
-      a.impressions += r.impressions;
-      a.reach += r.reach;
-      a.clicks += r.clicks;
-      a.cost += r.cost;
-      a.purchases += r.purchases;
-      a.revenue += r.revenue;
+      if (!map.has(pkey)) map.set(pkey, { key: pkey, name: pkey, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = map.get(pkey);
+      a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [filteredRows]);
 
-      const dkey = toDayKey(r.day) || '(not set)';
-      a = dayMap.get(dkey);
-      if (!a) { a = { key: dkey, name: dkey, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 }; dayMap.set(dkey, a); }
-      a.impressions += r.impressions;
-      a.reach += r.reach;
-      a.clicks += r.clicks;
-      a.cost += r.cost;
-      a.purchases += r.purchases;
-      a.revenue += r.revenue;
-
+  const ads = useMemo(() => {
+    const map = new Map();
+    filteredRows.forEach(r => {
       const adid = r.ad_id != null ? String(r.ad_id) : (r.ad_name || '(not set)');
       const adName = r.ad_name || adid;
-      a = adMap.get(adid);
-      if (!a) { a = { key: adid, name: adName, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 }; adMap.set(adid, a); }
-      a.impressions += r.impressions;
-      a.reach += r.reach;
-      a.clicks += r.clicks;
-      a.cost += r.cost;
-      a.purchases += r.purchases;
-      a.revenue += r.revenue;
+      if (!map.has(adid)) map.set(adid, { key: adid, name: adName, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = map.get(adid);
+      a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [filteredRows]);
 
+  const platforms = useMemo(() => {
+    const map = new Map();
+    filteredRows.forEach(r => {
       const pplat = r.platform != null && r.platform !== '' ? String(r.platform) : '(not set)';
-      a = platformMap.get(pplat);
-      if (!a) { a = { key: pplat, name: pplat, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 }; platformMap.set(pplat, a); }
-      a.impressions += r.impressions;
-      a.reach += r.reach;
-      a.clicks += r.clicks;
-      a.cost += r.cost;
-      a.purchases += r.purchases;
-      a.revenue += r.revenue;
+      if (!map.has(pplat)) map.set(pplat, { key: pplat, name: pplat, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = map.get(pplat);
+      a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [filteredRows]);
 
+  const platformDevices = useMemo(() => {
+    const map = new Map();
+    filteredRows.forEach(r => {
       const dev = r.device_platform != null && r.device_platform !== '' ? String(r.device_platform) : '(not set)';
-      a = deviceMap.get(dev);
-      if (!a) { a = { key: dev, name: dev, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 }; deviceMap.set(dev, a); }
-      a.impressions += r.impressions;
-      a.reach += r.reach;
-      a.clicks += r.clicks;
-      a.cost += r.cost;
-      a.purchases += r.purchases;
-      a.revenue += r.revenue;
+      if (!map.has(dev)) map.set(dev, { key: dev, name: dev, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = map.get(dev);
+      a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [filteredRows]);
 
+  const countries = useMemo(() => {
+    const map = new Map();
+    filteredRows.forEach(r => {
+      const ref = getRef(r);
       const country = (ref && ref.country) ? ref.country : '(not set)';
-      a = countryMap.get(country);
-      if (!a) { a = { key: country, name: country, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 }; countryMap.set(country, a); }
-      a.impressions += r.impressions;
-      a.reach += r.reach;
-      a.clicks += r.clicks;
-      a.cost += r.cost;
-      a.purchases += r.purchases;
-      a.revenue += r.revenue;
+      if (!map.has(country)) map.set(country, { key: country, name: country, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = map.get(country);
+      a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [filteredRows, getRef]);
 
+  const products = useMemo(() => {
+    const map = new Map();
+    filteredRows.forEach(r => {
+      const ref = getRef(r);
       const product_type = (ref && ref.product_type) ? ref.product_type : '(not set)';
-      a = productMap.get(product_type);
-      if (!a) { a = { key: product_type, name: product_type, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 }; productMap.set(product_type, a); }
-      a.impressions += r.impressions;
-      a.reach += r.reach;
-      a.clicks += r.clicks;
-      a.cost += r.cost;
-      a.purchases += r.purchases;
-      a.revenue += r.revenue;
+      if (!map.has(product_type)) map.set(product_type, { key: product_type, name: product_type, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = map.get(product_type);
+      a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [filteredRows, getRef]);
 
+  const shows = useMemo(() => {
+    const map = new Map();
+    filteredRows.forEach(r => {
+      const ref = getRef(r);
       const showname = (ref && ref.showname) ? ref.showname : '(not set)';
-      a = showMap.get(showname);
-      if (!a) { a = { key: showname, name: showname, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 }; showMap.set(showname, a); }
-      a.impressions += r.impressions;
-      a.reach += r.reach;
-      a.clicks += r.clicks;
-      a.cost += r.cost;
-      a.purchases += r.purchases;
-      a.revenue += r.revenue;
-    }
+      if (!map.has(showname)) map.set(showname, { key: showname, name: showname, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = map.get(showname);
+      a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [filteredRows, getRef]);
 
-    const finish = (map, sortByCost = true) => {
-      const out = Array.from(map.values());
-      out.forEach(addMetrics);
-      if (sortByCost) out.sort((a, b) => b.cost - a.cost);
-      return out;
-    };
-    dayMap.forEach((row) => addMetrics(row));
-
-    return {
-      campaigns: finish(campaignMap),
-      adSets: finish(adSetMap),
-      placements: finish(placementMap),
-      dayMap,
-      ads: finish(adMap),
-      platforms: finish(platformMap),
-      platformDevices: finish(deviceMap),
-      countries: finish(countryMap),
-      products: finish(productMap),
-      shows: finish(showMap),
-    };
-  }, [filteredRows, campaignRefMap]);
-
-  /** Day tab: show every calendar day in range, with zeros for missing days. If range is missing or single-day but we have more data, use min/max from dayMap so we show all days. */
   const days = useMemo(() => {
-    const { from, to } = dateRange;
-    const dayMap = aggregated.dayMap;
-    let allDays = calendarDays(from, to);
+    const dayMap = new Map();
+    filteredRows.forEach(r => {
+      const dkey = toDayKey(r.day) || '(not set)';
+      if (!dayMap.has(dkey)) dayMap.set(dkey, { key: dkey, name: dkey, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = dayMap.get(dkey);
+      a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
+    });
+    dayMap.forEach(addMetrics);
+
+    let allDays = calendarDays(dateRange.from, dateRange.to);
     if (allDays.length <= 1 && dayMap.size > 0) {
       const keys = Array.from(dayMap.keys()).filter((k) => k !== '(not set)' && k != null);
       if (keys.length > 0) {
         keys.sort();
-        const min = keys[0];
-        const max = keys[keys.length - 1];
-        allDays = calendarDays(min, max);
+        allDays = calendarDays(keys[0], keys[keys.length - 1]);
       }
     }
-    const out = [];
-    for (let i = 0; i < allDays.length; i++) {
-      const d = allDays[i];
-      const row = dayMap.get(d);
-      if (row) {
-        out.push(row);
-      } else {
-        out.push({
-          key: d,
-          name: d,
-          impressions: 0,
-          reach: 0,
-          clicks: 0,
-          cost: 0,
-          purchases: 0,
-          revenue: 0,
-          ctr: 0,
-          cpc: 0,
-          cpm: 0,
-        });
-      }
-    }
-    out.sort((a, b) => a.name.localeCompare(b.name));
-    return out;
-  }, [aggregated.dayMap, dateRange]);
-
-  const campaigns = aggregated.campaigns;
-  const adSets = aggregated.adSets;
-  const placements = aggregated.placements;
-  const ads = aggregated.ads;
-  const platforms = aggregated.platforms;
-  const platformDevices = aggregated.platformDevices;
-  const countries = aggregated.countries;
-  const products = aggregated.products;
-  const shows = aggregated.shows;
+    const out = allDays.map(d => dayMap.get(d) || { key: d, name: d, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0, ctr: 0, cpc: 0, cpm: 0 });
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }, [filteredRows, dateRange]);
 
   const kpis = useMemo(() => {
     if (!campaigns.length) return null;
     const k = { impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 };
-    for (let i = 0; i < campaigns.length; i++) {
-      const c = campaigns[i];
-      k.impressions += c.impressions;
-      k.reach += c.reach;
-      k.clicks += c.clicks;
-      k.cost += c.cost;
-      k.purchases += c.purchases;
-      k.revenue += c.revenue;
-    }
+    campaigns.forEach(c => {
+      k.impressions += c.impressions; k.reach += c.reach; k.clicks += c.clicks; k.cost += c.cost; k.purchases += c.purchases; k.revenue += c.revenue;
+    });
     k.ctr = k.impressions ? (k.clicks / k.impressions) * 100 : 0;
     k.cpc = k.clicks ? k.cost / k.clicks : 0;
     k.cpm = k.impressions ? (k.cost / (k.impressions / 1000)) : 0;
@@ -463,30 +418,15 @@ export function useMetaCampaignsData() {
     (campaignRef || []).forEach((r) => {
       if (r.product_type != null && r.product_type !== '') typeSet.add(String(r.product_type));
     });
-    const customers = [{ id: 'ALL', name: 'All Customers' }, ...[...accountSet].sort().map((id) => ({ id, name: id }))];
-    const productTypes = [{ id: 'all', name: 'All Types' }, ...[...typeSet].sort().map((t) => ({ id: t, name: t }))];
-    const deliveryStatuses = [{ id: 'all', name: 'All' }, ...[...statusSet].sort().map((s) => ({ id: s, name: s }))];
-    return { customers, productTypes, deliveryStatuses };
+    return { 
+      customers: [{ id: 'ALL', name: 'All Customers' }, ...[...accountSet].sort().map((id) => ({ id, name: id }))], 
+      productTypes: [{ id: 'all', name: 'All Types' }, ...[...typeSet].sort().map((t) => ({ id: t, name: t }))], 
+      deliveryStatuses: [{ id: 'all', name: 'All' }, ...[...statusSet].sort().map((s) => ({ id: s, name: s }))] 
+    };
   }, [rawRows, campaignRef]);
 
   return {
-    filters,
-    updateFilter,
-    batchUpdateFilters,
-    fetchData,
-    loading,
-    error,
-    filterOptions,
-    campaigns,
-    adSets,
-    placements,
-    days,
-    ads,
-    platforms,
-    platformDevices,
-    countries,
-    products,
-    shows,
-    kpis,
+    filters, updateFilter, batchUpdateFilters, fetchData, loading, error, filterOptions,
+    campaigns, adSets, placements, days, ads, platforms, platformDevices, countries, products, shows, kpis,
   };
 }

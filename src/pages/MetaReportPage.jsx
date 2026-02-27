@@ -149,7 +149,9 @@ export function MetaReportPage() {
   const [activeTab, setActiveTab] = useState('campaigns');
   const [sort, setSort] = useState(() => {
     const o = {};
-    TABS.forEach((t) => { o[t.id] = { col: 'cost', dir: 'desc' }; });
+    TABS.forEach((t) => {
+      o[t.id] = t.id === 'day' ? { col: 'name', dir: 'asc' } : { col: 'cost', dir: 'desc' };
+    });
     return o;
   });
   const [pg, setPg] = useState(() => {
@@ -183,7 +185,7 @@ export function MetaReportPage() {
 
   const handlePage = useCallback((tab, page) => setPg((prev) => ({ ...prev, [tab]: page })), []);
 
-  const handleApply = () => {
+  const handleApply = useCallback(() => {
     TABS.forEach((t) => setPg((prev) => ({ ...prev, [t.id]: 1 })));
     batchUpdateFilters({
       customerId,
@@ -193,7 +195,12 @@ export function MetaReportPage() {
       adGroupSearch,
       keywordSearch,
     });
-  };
+    setTimeout(() => fetchData(), 0);
+  }, [batchUpdateFilters, fetchData, customerId, productType, deliveryStatus, campaignSearch, adGroupSearch, keywordSearch]);
+
+  const handleRetry = useCallback(() => {
+    fetchData();
+  }, [fetchData]);
 
   useEffect(() => {
     setCustomerId(filters.customerId || 'ALL');
@@ -344,7 +351,8 @@ export function MetaReportPage() {
   const currentTabConfig = TABS.find((t) => t.id === activeTab) || TABS[0];
   const currentData = tabDataMap[activeTab] || [];
   const totals = currentData.length ? computeTotals(currentData) : null;
-  const s = sort[activeTab] || { col: 'cost', dir: 'desc' };
+  const defaultSort = activeTab === 'day' ? { col: 'name', dir: 'asc' } : { col: 'cost', dir: 'desc' };
+  const s = sort[activeTab] || defaultSort;
   const sorted = sortRows(currentData, s.col, s.dir);
   const info = paginate(sorted, pg[activeTab] || 1);
 
@@ -456,7 +464,7 @@ export function MetaReportPage() {
         {error && (
           <div style={{ padding: '16px 20px', background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 'var(--radius-md)', margin: '0 0 16px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
             <span style={{ flex: 1 }}>{error}</span>
-            <button type="button" className="btn btn-primary btn-sm" onClick={handleApply}>Retry</button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={handleRetry}>Retry</button>
           </div>
         )}
 
