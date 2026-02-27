@@ -117,7 +117,7 @@ function normalizeRow(r) {
 
 export function useMetaCampaignsData() {
   const [filters, setFilters] = useState({
-    datePreset: 'last30', dateFrom: '', dateTo: '',
+    datePreset: 'this_month', dateFrom: '', dateTo: '',
     compareOn: false, compareFrom: '', compareTo: '',
     customerId: 'ALL', productType: 'all', deliveryStatus: 'all',
     campaignSearch: '', adGroupSearch: '', keywordSearch: '',

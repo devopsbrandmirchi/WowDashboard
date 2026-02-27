@@ -60,7 +60,7 @@ function addMetrics(o) {
 
 export function useGoogleAdsData() {
   const [filters, setFilters] = useState({
-    datePreset: 'all', dateFrom: '', dateTo: '',
+    datePreset: 'this_month', dateFrom: '', dateTo: '',
     compareOn: false, compareFrom: '', compareTo: '',
     customerId: 'ALL', channelType: 'all', status: 'all',
     campaignSearch: '', adGroupSearch: '', keywordSearch: '',
