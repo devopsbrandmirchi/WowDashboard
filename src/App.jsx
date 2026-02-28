@@ -9,13 +9,13 @@ import { NotificationContainer } from './components/Notification';
 import { DashboardPage } from './pages/DashboardPage';
 import { GoogleAdsPage } from './pages/GoogleAdsPage';
 import { MetaReportPage } from './pages/MetaReportPage';
+import { TiktokReportPage } from './pages/TiktokReportPage';
+import { RedditReportPage } from './pages/RedditReportPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 
 const PLACEHOLDER_PAGES = {
   'bing-ads':     { title: 'Bing Ads', subtitle: 'Microsoft Advertising Performance' },
-  'tiktok-ads':   { title: 'TikTok Ads', subtitle: 'TikTok Campaign Performance' },
-  'reddit-ads':   { title: 'Reddit Ads', subtitle: 'Reddit Campaign Performance' },
   'amazon-ads':   { title: 'Amazon Ads', subtitle: 'Amazon Advertising Performance' },
   'dsp':          { title: 'DSP / Programmatic', subtitle: 'The Trade Desk & DV360 Performance' },
   'dating-apps':  { title: 'Dating Apps', subtitle: 'Direct Buy Performance' },
@@ -36,6 +36,8 @@ function CurrentPage() {
   if (currentPage === 'dashboard') return <DashboardPage />;
   if (currentPage === 'google-ads') return <GoogleAdsPage />;
   if (currentPage === 'meta-ads') return <MetaReportPage />;
+  if (currentPage === 'tiktok-ads') return <TiktokReportPage />;
+  if (currentPage === 'reddit-ads') return <RedditReportPage />;
   if (currentPage === 'settings') return <SettingsPage />;
 
   const config = PLACEHOLDER_PAGES[currentPage];

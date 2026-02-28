@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { PAGE_TITLES, CLIENTS } from '../data/staticData';
 
 const STORAGE_KEYS = {
@@ -38,6 +38,27 @@ export function AppProvider({ children }) {
   });
 
   const headerTitle = PAGE_TITLES[currentPage] || 'Executive Dashboard';
+  const exportPdfRef = useRef(null);
+
+  const showNotification = useCallback((message, duration = 3000) => {
+    const id = Date.now();
+    setNotifications((prev) => [...prev, { id, message, duration }]);
+    setTimeout(() => {
+      setNotifications((prev) => prev.filter((n) => n.id !== id));
+    }, duration);
+  }, []);
+
+  const registerExportPdf = useCallback((fn) => {
+    exportPdfRef.current = fn;
+  }, []);
+
+  const triggerExportPdf = useCallback(() => {
+    if (typeof exportPdfRef.current === 'function') {
+      exportPdfRef.current();
+    } else {
+      showNotification('Open a report (Meta, Google Ads, or TikTok) to export PDF.');
+    }
+  }, [showNotification]);
 
   const showPage = useCallback((pageId) => {
     setCurrentPage(pageId);
@@ -53,15 +74,7 @@ export function AppProvider({ children }) {
     if (value && value !== 'Select Client...') {
       showNotification('Client switched to: ' + value);
     }
-  }, []);
-
-  const showNotification = useCallback((message, duration = 3000) => {
-    const id = Date.now();
-    setNotifications((prev) => [...prev, { id, message, duration }]);
-    setTimeout(() => {
-      setNotifications((prev) => prev.filter((n) => n.id !== id));
-    }, duration);
-  }, []);
+  }, [showNotification]);
 
   const updateBranding = useCallback((agencyName, agencyLogo) => {
     setBranding({ agencyName: agencyName || branding.agencyName, agencyLogo: agencyLogo ?? branding.agencyLogo });
@@ -140,6 +153,8 @@ export function AppProvider({ children }) {
     updateColors,
     resetSettings,
     clients: ['Select Client...', ...CLIENTS],
+    registerExportPdf,
+    triggerExportPdf,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

@@ -3,32 +3,23 @@ import { supabase } from '../lib/supabase';
 
 const PAGE_SIZE = 1000;
 
-/** * OPTIMIZATION 1: Concurrent Pagination
- * Asks DB for total count, then fires all page requests simultaneously.
- * Passes columns and options back into the factory so .select() is called FIRST.
- */
-async function fetchAllRowsConcurrently(queryFactory, columns = '*') {
-  // 1. Ask DB exactly how many rows exist (head: true means don't return rows, just the count)
-  const { count, error: countError } = await queryFactory(columns, { count: 'exact', head: true });
-  if (countError) throw countError;
-  if (!count || count === 0) return [];
+/** Get date string (YYYY-MM-DD) from a raw row - tiktok_campaigns_data may use different column names */
+function getRowDate(r) {
+  return toDayKey(r.day ?? r.stat_time_day ?? r.date ?? r.stat_date ?? r.report_date);
+}
 
-  // 2. Generate all page requests in parallel
-  const pages = Math.ceil(count / PAGE_SIZE);
-  const promises = [];
-  for (let i = 0; i < pages; i++) {
-    const offset = i * PAGE_SIZE;
-    promises.push(
-      queryFactory(columns, {}).range(offset, offset + PAGE_SIZE - 1)
-    );
+async function fetchAllRows(queryFactory) {
+  const results = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await queryFactory().range(offset, offset + PAGE_SIZE - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    results.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
   }
-
-  // 3. Resolve all network requests at the exact same time
-  const responses = await Promise.all(promises);
-  return responses.flatMap(res => {
-    if (res.error) throw res.error;
-    return res.data || [];
-  });
+  return results;
 }
 
 function computeDateRange(preset, customFrom, customTo) {
@@ -77,8 +68,6 @@ function calendarDays(from, to) {
   return out;
 }
 
-const DATE_COL = 'day';
-
 function addMetrics(o) {
   const cost = o.cost;
   const impressions = o.impressions;
@@ -88,48 +77,44 @@ function addMetrics(o) {
   o.cpc = clicks ? cost / clicks : 0;
   o.cpm = impressions ? (cost / (impressions / 1000)) : 0;
   o.conv_rate = clicks ? (purchases / clicks) * 100 : 0;
+  o.cpa = purchases ? cost / purchases : 0;
   return o;
 }
 
+/** Normalize row: support common TikTok/DB column names (spend/cost, conversions/purchases) */
 function normalizeRow(r) {
-  const revenue = num(r.purchases_value) + num(r.inapp_purchases_value) + num(r.direct_website_purchases_value);
+  const cost = num(r.amount_spent_usd ?? r.spend ?? r.cost);
+  const purchases = num(r.purchases ?? r.conversions ?? r.conversion);
   return {
-    account_id: r.account_id,
-    delivery_status: r.delivery_status ?? '',
     campaign_id: r.campaign_id,
-    campaign_name: r.campaign_name,
-    adset_id: r.adset_id,
-    adset_name: r.adset_name,
+    campaign_name: r.campaign_name ?? '',
+    adset_id: r.adset_id ?? r.adgroup_id,
+    adset_name: r.adset_name ?? r.adgroup_name ?? '',
     ad_id: r.ad_id,
-    ad_name: r.ad_name,
+    ad_name: r.ad_name ?? '',
     placement: r.placement ?? '',
-    day: r.day,
-    platform: r.platform ?? '',
-    device_platform: r.device_platform ?? '',
+    day: r.day ?? r.stat_time_day ?? r.date,
     impressions: num(r.impressions),
     reach: num(r.reach),
-    clicks: num(r.clicks_all),
-    cost: num(r.amount_spent_usd),
-    purchases: num(r.purchases) || num(r.meta_purchases),
-    revenue,
+    clicks: num(r.clicks ?? r.clicks_all),
+    cost,
+    purchases,
+    revenue: num(r.revenue ?? r.total_purchase_value),
   };
 }
 
-export function useMetaCampaignsData() {
+export function useTiktokReportData() {
   const [filters, setFilters] = useState({
-    datePreset: 'this_month', dateFrom: '', dateTo: '',
-    compareOn: false, compareFrom: '', compareTo: '',
-    customerId: 'ALL', productType: 'all', deliveryStatus: 'all',
-    campaignSearch: '', adGroupSearch: '', keywordSearch: '',
+    datePreset: 'this_month',
+    dateFrom: '',
+    dateTo: '',
+    campaignSearch: '',
+    adGroupSearch: '',
   });
 
   const [rawRows, setRawRows] = useState([]);
   const [dateRange, setDateRange] = useState({ from: null, to: null });
-  
-  // OPTIMIZATION 3: Cache reference data so we don't re-download it on every filter/date change
-  const [campaignRef, setCampaignRef] = useState(null);
-  const [adsetRef, setAdsetRef] = useState(null);
-  
+  const [campaignRef, setCampaignRef] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const filtersRef = useRef(filters);
@@ -159,126 +144,77 @@ export function useMetaCampaignsData() {
       }
       setDateRange({ from, to });
 
-      // Accept columns and options so .select() executes before .gte()
-      const buildDataQuery = (columns = '*', options = {}) => {
-        let q = supabase
-          .from('facebook_campaigns_data')
-          .select(columns, options) // <--- Fix: .select() must be called before filters
-          .gte(DATE_COL, from)
-          .lte(DATE_COL, to);
-
-        // Don't order if we are just doing a HEAD request for the count
-        if (!options.head) {
-          q = q.order(DATE_COL, { ascending: false });
-        }
-
-        if (f.customerId !== 'ALL') q = q.eq('account_id', f.customerId);
-        if (f.deliveryStatus !== 'all') q = q.eq('delivery_status', f.deliveryStatus);
+      const buildDataQuery = () => {
+        let q = supabase.from('tiktok_campaigns_data').select('*');
         if ((f.campaignSearch || '').trim()) q = q.ilike('campaign_name', `%${f.campaignSearch.trim()}%`);
         if ((f.adGroupSearch || '').trim()) q = q.ilike('adset_name', `%${f.adGroupSearch.trim()}%`);
-        if ((f.keywordSearch || '').trim()) q = q.ilike('ad_name', `%${f.keywordSearch.trim()}%`);
-        
         return q;
       };
 
-      /** * OPTIMIZATION 2: Column Whitelisting
-       * Prevents transferring bloated JSON configuration payloads native to Facebook APIs 
-       */
-      const DATA_COLUMNS = 'account_id, delivery_status, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, placement, day, platform, device_platform, impressions, reach, clicks_all, amount_spent_usd, purchases, meta_purchases, purchases_value, inapp_purchases_value, direct_website_purchases_value';
+      const refQuery = () => supabase.from('tiktok_campaigns_reference_data').select('*');
 
-      const fetches = [
-        fetchAllRowsConcurrently(buildDataQuery, DATA_COLUMNS)
-      ];
-      
-      // Update reference fetchers to accept the new (columns, options) pattern
-      if (!campaignRef) {
-        fetches.push(fetchAllRowsConcurrently(
-          (cols = '*', opts = {}) => supabase.from('facebook_campaigns_reference_data').select(cols, opts), 
-          'campaign_id,campaign_name,country,product_type,showname'
-        ));
-      }
-      if (!adsetRef) {
-        fetches.push(fetchAllRowsConcurrently(
-          (cols = '*', opts = {}) => supabase.from('facebook_adset_reference_data').select(cols, opts), 
-          'adset_name,country,product_type'
-        ));
-      }
+      const [dataRows, refRes] = await Promise.all([
+        fetchAllRows(buildDataQuery),
+        fetchAllRows(refQuery).catch(() => []),
+      ]);
 
-      const results = await Promise.all(fetches);
-      const dataRows = results[0];
-      
-      if (!campaignRef && results[1]) setCampaignRef(results[1]);
-      if (!adsetRef && results[2]) setAdsetRef(results[2]);
+      const filteredByDate = from && to
+        ? dataRows.filter((r) => {
+            const d = getRowDate(r);
+            return d && d >= from && d <= to;
+          })
+        : dataRows;
 
-      const normalized = [];
-      for (let i = 0; i < dataRows.length; i++) normalized.push(normalizeRow(dataRows[i]));
+      const normalized = filteredByDate.map(normalizeRow);
       setRawRows(normalized);
-      
+      setCampaignRef(refRes || []);
     } catch (err) {
-      console.error('Meta fetch error:', err);
+      console.error('TikTok fetch error:', err);
       const msg = err.message || 'Failed to fetch data';
       setError(msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network')
         ? 'Cannot reach Supabase. Check your network connection.' : msg);
     } finally {
       setLoading(false);
     }
-  }, [campaignRef, adsetRef]);
+  }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const campaignRefMap = useMemo(() => {
     const m = new Map();
-    const arr = campaignRef || [];
-    for (let i = 0; i < arr.length; i++) {
-      const r = arr[i];
+    (campaignRef || []).forEach((r) => {
+      const refVal = {
+        campaign_name: r.campaign_name,
+        country: r.country ?? '',
+        product_type: r.product_type ?? '',
+        showname: r.showname ?? '',
+      };
       const nameKey = (r.campaign_name || '').trim();
-      const refVal = { campaign_name: r.campaign_name, country: r.country ?? '', product_type: r.product_type ?? '', showname: r.showname ?? '' };
       if (nameKey && !m.has(nameKey)) m.set(nameKey, refVal);
-      const id = r.campaign_id != null ? String(r.campaign_id) : '';
-      if (id && !m.has(id)) m.set(id, refVal);
-    }
+    });
     return m;
   }, [campaignRef]);
 
-  /** OPTIMIZATION 4: Local filter only runs on Product Type because Supabase handles the rest */
-  const filteredRows = useMemo(() => {
-    if (filters.productType === 'all') return rawRows; 
-
-    const out = [];
-    for (let i = 0; i < rawRows.length; i++) {
-      const r = rawRows[i];
-      const ref = campaignRefMap.get(String(r.campaign_id)) || (r.campaign_name ? campaignRefMap.get((r.campaign_name || '').trim()) : null);
-      const pt = (ref && ref.product_type) ? ref.product_type : '';
-      if (pt === filters.productType) out.push(r);
-    }
-    return out;
-  }, [rawRows, campaignRefMap, filters.productType]);
-
   const getRef = useCallback((r) => {
-    const cid = r.campaign_id != null ? String(r.campaign_id) : 'Undefined';
     const nameKey = (r.campaign_name || '').trim();
-    return campaignRefMap.get(cid) || (nameKey ? campaignRefMap.get(nameKey) : null);
+    return nameKey ? campaignRefMap.get(nameKey) : null;
   }, [campaignRefMap]);
 
-  /** * OPTIMIZATION 5: Splitting Aggregations
-   * Instead of one massive CPU-blocking function, split them into isolated useMemo blocks
-   */
   const campaigns = useMemo(() => {
     const map = new Map();
-    filteredRows.forEach(r => {
+    rawRows.forEach((r) => {
       const cid = r.campaign_id != null ? String(r.campaign_id) : 'Undefined';
-      const ref = getRef(r);
-      const name = (ref && ref.campaign_name) ? ref.campaign_name : (r.campaign_name || cid);
+      const name = (r.campaign_name || '').trim() || cid;
       if (!map.has(cid)) map.set(cid, { key: cid, name, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
       const a = map.get(cid);
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [filteredRows, getRef]);
+  }, [rawRows]);
 
   const adSets = useMemo(() => {
     const map = new Map();
-    filteredRows.forEach(r => {
+    rawRows.forEach((r) => {
       const asid = r.adset_id != null ? String(r.adset_id) : (r.adset_name || 'Undefined');
       const asName = r.adset_name || asid;
       if (!map.has(asid)) map.set(asid, { key: asid, name: asName, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
@@ -286,22 +222,11 @@ export function useMetaCampaignsData() {
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [filteredRows]);
-
-  const placements = useMemo(() => {
-    const map = new Map();
-    filteredRows.forEach(r => {
-      const pkey = r.placement != null && r.placement !== '' ? String(r.placement) : 'Undefined';
-      if (!map.has(pkey)) map.set(pkey, { key: pkey, name: pkey, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
-      const a = map.get(pkey);
-      a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
-    });
-    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [filteredRows]);
+  }, [rawRows]);
 
   const ads = useMemo(() => {
     const map = new Map();
-    filteredRows.forEach(r => {
+    rawRows.forEach((r) => {
       const adid = r.ad_id != null ? String(r.ad_id) : (r.ad_name || 'Undefined');
       const adName = r.ad_name || adid;
       if (!map.has(adid)) map.set(adid, { key: adid, name: adName, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
@@ -309,33 +234,22 @@ export function useMetaCampaignsData() {
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [filteredRows]);
+  }, [rawRows]);
 
-  const platforms = useMemo(() => {
+  const placements = useMemo(() => {
     const map = new Map();
-    filteredRows.forEach(r => {
-      const pplat = r.platform != null && r.platform !== '' ? String(r.platform) : 'Undefined';
-      if (!map.has(pplat)) map.set(pplat, { key: pplat, name: pplat, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
-      const a = map.get(pplat);
+    rawRows.forEach((r) => {
+      const pkey = r.placement != null && r.placement !== '' ? String(r.placement) : 'Undefined';
+      if (!map.has(pkey)) map.set(pkey, { key: pkey, name: pkey, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = map.get(pkey);
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [filteredRows]);
-
-  const platformDevices = useMemo(() => {
-    const map = new Map();
-    filteredRows.forEach(r => {
-      const dev = r.device_platform != null && r.device_platform !== '' ? String(r.device_platform) : 'Undefined';
-      if (!map.has(dev)) map.set(dev, { key: dev, name: dev, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
-      const a = map.get(dev);
-      a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
-    });
-    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [filteredRows]);
+  }, [rawRows]);
 
   const countries = useMemo(() => {
     const map = new Map();
-    filteredRows.forEach(r => {
+    rawRows.forEach((r) => {
       const ref = getRef(r);
       const country = (ref && ref.country) ? ref.country : 'Undefined';
       if (!map.has(country)) map.set(country, { key: country, name: country, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
@@ -343,11 +257,11 @@ export function useMetaCampaignsData() {
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [filteredRows, getRef]);
+  }, [rawRows, getRef]);
 
   const products = useMemo(() => {
     const map = new Map();
-    filteredRows.forEach(r => {
+    rawRows.forEach((r) => {
       const ref = getRef(r);
       const product_type = (ref && ref.product_type) ? ref.product_type : 'Undefined';
       if (!map.has(product_type)) map.set(product_type, { key: product_type, name: product_type, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
@@ -355,11 +269,11 @@ export function useMetaCampaignsData() {
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [filteredRows, getRef]);
+  }, [rawRows, getRef]);
 
   const shows = useMemo(() => {
     const map = new Map();
-    filteredRows.forEach(r => {
+    rawRows.forEach((r) => {
       const ref = getRef(r);
       const showname = (ref && ref.showname) ? ref.showname : 'Undefined';
       if (!map.has(showname)) map.set(showname, { key: showname, name: showname, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
@@ -367,18 +281,17 @@ export function useMetaCampaignsData() {
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [filteredRows, getRef]);
+  }, [rawRows, getRef]);
 
   const days = useMemo(() => {
     const dayMap = new Map();
-    filteredRows.forEach(r => {
+    rawRows.forEach((r) => {
       const dkey = toDayKey(r.day) || 'Undefined';
       if (!dayMap.has(dkey)) dayMap.set(dkey, { key: dkey, name: dkey, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
       const a = dayMap.get(dkey);
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
     });
     dayMap.forEach(addMetrics);
-
     let allDays = calendarDays(dateRange.from, dateRange.to);
     if (allDays.length <= 1 && dayMap.size > 0) {
       const keys = Array.from(dayMap.keys()).filter((k) => k !== 'Undefined' && k != null);
@@ -387,14 +300,14 @@ export function useMetaCampaignsData() {
         allDays = calendarDays(keys[0], keys[keys.length - 1]);
       }
     }
-    const out = allDays.map(d => dayMap.get(d) || { key: d, name: d, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0, ctr: 0, cpc: 0, cpm: 0 });
+    const out = allDays.map((d) => dayMap.get(d) || { key: d, name: d, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0, ctr: 0, cpc: 0, cpm: 0, cpa: 0 });
     return out.sort((a, b) => a.name.localeCompare(b.name));
-  }, [filteredRows, dateRange]);
+  }, [rawRows, dateRange]);
 
   const kpis = useMemo(() => {
     if (!campaigns.length) return null;
     const k = { impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 };
-    campaigns.forEach(c => {
+    campaigns.forEach((c) => {
       k.impressions += c.impressions; k.reach += c.reach; k.clicks += c.clicks; k.cost += c.cost; k.purchases += c.purchases; k.revenue += c.revenue;
     });
     k.ctr = k.impressions ? (k.clicks / k.impressions) * 100 : 0;
@@ -407,26 +320,36 @@ export function useMetaCampaignsData() {
     return k;
   }, [campaigns]);
 
-  const filterOptions = useMemo(() => {
-    const accountSet = new Set();
-    const statusSet = new Set();
-    const typeSet = new Set();
-    rawRows.forEach((r) => {
-      if (r.account_id != null && r.account_id !== '') accountSet.add(String(r.account_id));
-      if (r.delivery_status != null && r.delivery_status !== '') statusSet.add(String(r.delivery_status));
-    });
-    (campaignRef || []).forEach((r) => {
-      if (r.product_type != null && r.product_type !== '') typeSet.add(String(r.product_type));
-    });
-    return { 
-      customers: [{ id: 'ALL', name: 'All Customers' }, ...[...accountSet].sort().map((id) => ({ id, name: id }))], 
-      productTypes: [{ id: 'all', name: 'All Types' }, ...[...typeSet].sort().map((t) => ({ id: t, name: t }))], 
-      deliveryStatuses: [{ id: 'all', name: 'All' }, ...[...statusSet].sort().map((s) => ({ id: s, name: s }))] 
-    };
-  }, [rawRows, campaignRef]);
+  const dailyTrends = useMemo(() => {
+    return days.map((d) => ({
+      date: d.name,
+      cost: d.cost,
+      impressions: d.impressions,
+      clicks: d.clicks,
+      conversions: d.purchases,
+      ctr: d.ctr,
+      cpc: d.cpc,
+      conv_rate: d.conv_rate,
+      cpa: d.cpa,
+    }));
+  }, [days]);
 
   return {
-    filters, updateFilter, batchUpdateFilters, fetchData, loading, error, filterOptions,
-    campaigns, adSets, placements, days, ads, platforms, platformDevices, countries, products, shows, kpis,
+    filters,
+    updateFilter,
+    batchUpdateFilters,
+    fetchData,
+    loading,
+    error,
+    campaigns,
+    adSets,
+    ads,
+    placements,
+    countries,
+    products,
+    shows,
+    days,
+    kpis,
+    dailyTrends,
   };
 }

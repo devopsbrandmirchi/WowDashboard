@@ -3,6 +3,8 @@ import { useGoogleAdsData } from '../hooks/useGoogleAdsData';
 import { formatCurrency2, formatNumber, formatDec } from '../utils/format';
 import { DateRangePicker } from '../components/DatePicker';
 import Chart from 'chart.js/auto';
+import { exportReportPdf, getDateRangeLabel } from '../utils/exportReportPdf';
+import { useApp } from '../context/AppContext';
 
 const fU = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fI = (n) => Math.round(Number(n || 0)).toLocaleString('en-US');
@@ -18,6 +20,9 @@ const TABS = [
   { id: 'keywords', label: 'Keywords' },
   { id: 'searchterms', label: 'Search Terms' },
   { id: 'geo', label: 'Geo' },
+  { id: 'country', label: 'Country' },
+  { id: 'product', label: 'Product' },
+  { id: 'shows', label: 'Shows' },
   { id: 'conversions', label: 'Conversions' },
 ];
 
@@ -138,19 +143,21 @@ function SortTh({ label, col, sort, onSort, align }) {
 
 /* ──────────────── MAIN COMPONENT ──────────────── */
 export function GoogleAdsPage() {
-  const { filters, updateFilter, batchUpdateFilters, fetchData, loading, error, customers, channelTypes, kpis, compareKpis, campaignTypes, campaigns, adGroups, keywords, geoData, conversionsData, dailyTrends, compareDailyTrends } = useGoogleAdsData();
+  const { branding, registerExportPdf } = useApp();
+  const { filters, updateFilter, batchUpdateFilters, fetchData, loading, error, customers, channelTypes, kpis, compareKpis, campaignTypes, campaigns, adGroups, keywords, geoData, countryData, productData, showsData, conversionsData, dailyTrends, compareDailyTrends } = useGoogleAdsData();
 
   const [activeTab, setActiveTab] = useState('campaigntypes');
   const [kpiCollapsed, setKpiCollapsed] = useState(false);
   const [chartCollapsed, setChartCollapsed] = useState(false);
   const [chartActiveMetrics, setChartActiveMetrics] = useState(['cost', 'clicks', 'conversions']);
-  const [sort, setSort] = useState({ campaigntypes: { col: 'cost', dir: 'desc' }, campaigns: { col: 'cost', dir: 'desc' }, adgroups: { col: 'cost', dir: 'desc' }, keywords: { col: 'cost', dir: 'desc' }, searchterms: { col: 'cost', dir: 'desc' }, geo: { col: 'cost', dir: 'desc' }, conversions: { col: 'conversions', dir: 'desc' } });
-  const [pg, setPg] = useState({ campaigntypes: 1, campaigns: 1, adgroups: 1, keywords: 1, searchterms: 1, geo: 1, conversions: 1 });
+  const [sort, setSort] = useState({ campaigntypes: { col: 'cost', dir: 'desc' }, campaigns: { col: 'cost', dir: 'desc' }, adgroups: { col: 'cost', dir: 'desc' }, keywords: { col: 'cost', dir: 'desc' }, searchterms: { col: 'cost', dir: 'desc' }, geo: { col: 'cost', dir: 'desc' }, country: { col: 'cost', dir: 'desc' }, product: { col: 'cost', dir: 'desc' }, shows: { col: 'cost', dir: 'desc' }, conversions: { col: 'conversions', dir: 'desc' } });
+  const [pg, setPg] = useState({ campaigntypes: 1, campaigns: 1, adgroups: 1, keywords: 1, searchterms: 1, geo: 1, country: 1, product: 1, shows: 1, conversions: 1 });
   const [expanded, setExpanded] = useState({});
   const [matchFilter, setMatchFilter] = useState('');
   const [hiddenCols, setHiddenCols] = useState({});
   const [colEditorOpen, setColEditorOpen] = useState(false);
   const colEditorRef = useRef(null);
+  const exportPdfRef = useRef(null);
 
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
@@ -186,7 +193,7 @@ export function GoogleAdsPage() {
     setExpanded((prev) => { const n = { ...prev }; if (n[key]) delete n[key]; else n[key] = true; return n; });
   }, []);
 
-  const handleApply = () => { setPg({ campaigntypes: 1, campaigns: 1, adgroups: 1, keywords: 1, searchterms: 1, geo: 1, conversions: 1 }); setExpanded({}); fetchData(); };
+  const handleApply = () => { setPg({ campaigntypes: 1, campaigns: 1, adgroups: 1, keywords: 1, searchterms: 1, geo: 1, country: 1, product: 1, shows: 1, conversions: 1 }); setExpanded({}); fetchData(); };
 
   const handleDatePickerApply = useCallback(({ preset, dateFrom, dateTo, compareOn, compareFrom, compareTo }) => {
     batchUpdateFilters({
@@ -384,6 +391,21 @@ export function GoogleAdsPage() {
     { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => fU(t.cpa) },
   ];
 
+  /* ── Country / Product / Shows Columns (ref data, same metrics as Geo) ── */
+  const refDimCols = (nameLabel, nameCol = 'name') => [
+    { col: nameCol, label: nameLabel, dim: true, clamp: true, cell: (r) => r[nameCol], total: () => 'Total' },
+    { col: 'impressions', label: 'Impr.', align: 'r', cell: (r) => fI(r.impressions), total: (t) => fI(t.impressions) },
+    { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => fI(t.clicks) },
+    { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => fP(t.ctr) },
+    { col: 'cpc', label: 'Avg CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => fU(t.cpc) },
+    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
+    { col: 'conversions', label: 'Conv.', align: 'r', cell: (r) => fI(r.conversions), total: (t) => fI(t.conversions) },
+    { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => fU(t.cpa) },
+  ];
+  const countryCols = refDimCols('Country');
+  const productCols = refDimCols('Product');
+  const showsCols = refDimCols('Show');
+
   /* ── Conversions Columns ── */
   const conversionCols = [
     { col: 'campaign_name', label: 'Campaign', dim: true, clamp: true, cell: (r) => r.campaign_name, total: () => 'Total' },
@@ -398,9 +420,10 @@ export function GoogleAdsPage() {
   const filteredKeywords = matchFilter ? keywords.filter((k) => k.keyword_match_type === matchFilter) : keywords;
 
   /* ── CSV handler (exports what you see, including pivot aggregation) ── */
+  const dataMap = { campaigntypes: campaignTypes, campaigns: campaigns, adgroups: adGroups, keywords: filteredKeywords, geo: geoData, country: countryData, product: productData, shows: showsData, conversions: conversionsData };
+  const colMap = { campaigntypes: campaignTypeCols, campaigns: campaignCols, adgroups: adGroupCols, keywords: keywordCols, geo: geoCols, country: countryCols, product: productCols, shows: showsCols, conversions: conversionCols };
+
   const handleCSV = () => {
-    const dataMap = { campaigntypes: campaignTypes, campaigns: campaigns, adgroups: adGroups, keywords: filteredKeywords, geo: geoData, conversions: conversionsData };
-    const colMap = { campaigntypes: campaignTypeCols, campaigns: campaignCols, adgroups: adGroupCols, keywords: keywordCols, geo: geoCols, conversions: conversionCols };
     const rawData = dataMap[activeTab];
     const allCols = colMap[activeTab];
     if (!rawData || !allCols) return;
@@ -409,6 +432,37 @@ export function GoogleAdsPage() {
     const csvCols = visCols.map((c) => ({ label: c.label, value: (r) => { const v = c.cell(r); return typeof v === 'object' ? (r[c.col] ?? '') : v; } }));
     exportCSV(csvCols, pivoted, `google-ads-${activeTab}.csv`);
   };
+
+  exportPdfRef.current = () => {
+    const dateRangeText = getDateRangeLabel(filters.datePreset, filters.dateFrom, filters.dateTo);
+    const kpiList = (kpis && kpiSelected) ? kpiSelected.map((key) => {
+      const metric = KPI_CATALOG.find((m) => m.key === key) || KPI_CATALOG[0];
+      return { label: metric.label, value: metric.fmt(kpis[key] ?? 0) };
+    }) : [];
+    const rawData = dataMap[activeTab];
+    const allCols = colMap[activeTab];
+    const visCols = rawData && allCols ? allCols.filter((c) => !hiddenCols[`${activeTab}:${c.col}`]) : [];
+    const pivoted = rawData && visCols.length ? pivotAggregate(rawData, allCols, visCols) : [];
+    const headers = visCols.map((c) => c.label);
+    const rows = pivoted.map((r) => visCols.map((c) => {
+      const v = c.cell(r);
+      return typeof v === 'object' && v !== null ? String(r[c.col] ?? '') : v;
+    }));
+    exportReportPdf({
+      reportTitle: 'Google Ads',
+      dateRangeText,
+      kpis: kpiList,
+      tableHeaders: headers,
+      tableRows: rows,
+      branding,
+      filename: `google-ads-${activeTab}`,
+    });
+  };
+
+  useEffect(() => {
+    registerExportPdf(() => exportPdfRef.current?.());
+    return () => registerExportPdf(null);
+  }, [registerExportPdf]);
 
   /* ── Campaign expand: sub-rows = ad groups for that campaign, aligned to parent columns ── */
   const subRowCell = (cols, row, colKey) => {
@@ -698,7 +752,7 @@ export function GoogleAdsPage() {
           <div className="gads-tabs-row">
             <div className="gads-tabs">
               {TABS.map((tab) => {
-                const countMap = { campaigntypes: campaignTypes.length, campaigns: campaigns.length, adgroups: adGroups.length, keywords: keywords.length, geo: geoData.length, conversions: conversionsData.length };
+                const countMap = { campaigntypes: campaignTypes.length, campaigns: campaigns.length, adgroups: adGroups.length, keywords: keywords.length, geo: geoData.length, country: countryData.length, product: productData.length, shows: showsData.length, conversions: conversionsData.length };
                 const count = countMap[tab.id];
                 return <button key={tab.id} type="button" className={`gads-tab ${activeTab === tab.id ? 'active' : ''}`} onClick={() => setActiveTab(tab.id)}>{tab.label}{count != null && !loading ? ` (${count})` : ''}</button>;
               })}
@@ -710,7 +764,7 @@ export function GoogleAdsPage() {
                   Columns
                 </button>
                 {colEditorOpen && (() => {
-                  const allCols = { campaigntypes: campaignTypeCols, campaigns: campaignCols, adgroups: adGroupCols, keywords: keywordCols, geo: geoCols, conversions: conversionCols }[activeTab] || [];
+                  const allCols = { campaigntypes: campaignTypeCols, campaigns: campaignCols, adgroups: adGroupCols, keywords: keywordCols, geo: geoCols, country: countryCols, product: productCols, shows: showsCols, conversions: conversionCols }[activeTab] || [];
                   return (
                     <div className="gads-col-dropdown">
                       <div className="gads-col-dropdown-header">Toggle Columns</div>
@@ -766,6 +820,12 @@ export function GoogleAdsPage() {
           {!loading && activeTab === 'searchterms' && <div className="gads-empty">Search terms data requires a <strong>google_search_terms_data</strong> table in Supabase.</div>}
 
           {!loading && activeTab === 'geo' && renderTable('geo', geoData, geoCols, { rowKey: (r) => r.location })}
+
+          {!loading && activeTab === 'country' && renderTable('country', countryData, countryCols, { rowKey: (r) => r.name })}
+
+          {!loading && activeTab === 'product' && renderTable('product', productData, productCols, { rowKey: (r) => r.name })}
+
+          {!loading && activeTab === 'shows' && renderTable('shows', showsData, showsCols, { rowKey: (r) => r.name })}
 
           {!loading && activeTab === 'conversions' && renderTable('conversions', conversionsData, conversionCols, { rowKey: (r) => r.campaign_id })}
         </div>

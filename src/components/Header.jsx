@@ -2,12 +2,8 @@ import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 
 export function Header() {
-  const { headerTitle, toggleSidebar, sidebarCollapsed, collapseSidebar, showNotification } = useApp();
+  const { headerTitle, toggleSidebar, sidebarCollapsed, collapseSidebar, triggerExportPdf, showNotification } = useApp();
   const { logout } = useAuth();
-
-  const handleExportPDF = () => {
-    showNotification('PDF export would be generated here. This feature requires server-side processing or a PDF library like jsPDF.');
-  };
 
   const handleShare = () => {
     if (navigator.share) {
@@ -50,7 +46,7 @@ export function Header() {
         <div className="header-filters" id="headerFilters">
           <span id="sb-sync-badge" style={{ color: 'var(--accent)', fontSize: 11, fontWeight: 600 }}>Live</span>
         </div>
-        <button type="button" className="btn btn-outline" onClick={handleExportPDF}>↓ Export PDF</button>
+        <button type="button" className="btn btn-outline" onClick={triggerExportPdf}>↓ Export PDF</button>
         <button type="button" className="btn btn-primary" onClick={handleShare}>Share Report</button>
         <button type="button" className="btn btn-outline" onClick={logout} title="Sign out">Log out</button>
       </div>

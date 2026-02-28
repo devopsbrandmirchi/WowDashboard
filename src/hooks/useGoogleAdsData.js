@@ -70,6 +70,7 @@ export function useGoogleAdsData() {
   const [rawAdGroups, setRawAdGroups] = useState([]);
   const [rawKeywords, setRawKeywords] = useState([]);
   const [rawCompareCampaigns, setRawCompareCampaigns] = useState([]);
+  const [campaignRef, setCampaignRef] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [channelTypes, setChannelTypes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -118,6 +119,8 @@ export function useGoogleAdsData() {
         }
       }
 
+      const refCampaign = () => supabase.from('google_campaigns_reference_data').select('campaign_name,country,product_type,showname');
+
       const fetches = [
         fetchAllRows(buildCampaignQuery(from, to)),
         fetchAllRows(() => {
@@ -134,6 +137,7 @@ export function useGoogleAdsData() {
           if (f.keywordSearch) q = q.ilike('keyword_text', `%${f.keywordSearch}%`);
           return q;
         }),
+        fetchAllRows(refCampaign).catch(() => []),
       ];
 
       if (f.compareOn && compFrom && compTo) {
@@ -141,8 +145,8 @@ export function useGoogleAdsData() {
       }
 
       const results = await Promise.all(fetches);
-      const [campaignData, adGroupData, keywordData] = results;
-      const compareCampaignData = results[3] || [];
+      const [campaignData, adGroupData, keywordData, refCampaignRes] = results;
+      const compareCampaignData = results[4] || [];
 
       let filteredAdGroups = adGroupData;
       let filteredKeywords = keywordData;
@@ -155,6 +159,7 @@ export function useGoogleAdsData() {
       setRawCampaigns(campaignData);
       setRawAdGroups(filteredAdGroups);
       setRawKeywords(filteredKeywords);
+      setCampaignRef(refCampaignRes || []);
       setRawCompareCampaigns(f.compareOn ? compareCampaignData : []);
 
       if (!optionsLoaded.current && campaignData.length > 0) {
@@ -179,6 +184,22 @@ export function useGoogleAdsData() {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  /** Reference map keyed by campaign_name (google_campaigns_reference_data has id, campaign_name, country, product_type, showname) */
+  const campaignRefMap = useMemo(() => {
+    const m = new Map();
+    (campaignRef || []).forEach((r) => {
+      const refVal = { campaign_name: r.campaign_name, country: r.country ?? '', product_type: r.product_type ?? '', showname: r.showname ?? '' };
+      const nameKey = (r.campaign_name || '').trim();
+      if (nameKey && !m.has(nameKey)) m.set(nameKey, refVal);
+    });
+    return m;
+  }, [campaignRef]);
+
+  const getRef = useCallback((r) => {
+    const nameKey = (r.campaign_name || '').trim();
+    return nameKey ? campaignRefMap.get(nameKey) : null;
+  }, [campaignRefMap]);
 
   /* ── Aggregations ── */
 
@@ -292,6 +313,55 @@ export function useGoogleAdsData() {
     return campaignsAgg.filter((c) => c.conversions > 0 || c.allConversions > 0).sort((a, b) => b.conversions - a.conversions);
   }, [campaignsAgg]);
 
+  /** Country / Product / Shows from reference data (same logic as Meta) */
+  const countryAgg = useMemo(() => {
+    const map = new Map();
+    rawCampaigns.forEach((r) => {
+      const ref = getRef(r);
+      const country = (ref && ref.country) ? ref.country : 'Undefined';
+      if (!map.has(country)) map.set(country, { name: country, cost: 0, clicks: 0, impressions: 0, conversions: 0, conversions_value: 0 });
+      const a = map.get(country);
+      a.cost += costFromMicros(r.cost_micros);
+      a.clicks += num(r.clicks);
+      a.impressions += num(r.impressions);
+      a.conversions += num(r.conversions);
+      a.conversions_value += num(r.conversions_value);
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [rawCampaigns, getRef]);
+
+  const productAgg = useMemo(() => {
+    const map = new Map();
+    rawCampaigns.forEach((r) => {
+      const ref = getRef(r);
+      const product_type = (ref && ref.product_type) ? ref.product_type : 'Undefined';
+      if (!map.has(product_type)) map.set(product_type, { name: product_type, cost: 0, clicks: 0, impressions: 0, conversions: 0, conversions_value: 0 });
+      const a = map.get(product_type);
+      a.cost += costFromMicros(r.cost_micros);
+      a.clicks += num(r.clicks);
+      a.impressions += num(r.impressions);
+      a.conversions += num(r.conversions);
+      a.conversions_value += num(r.conversions_value);
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [rawCampaigns, getRef]);
+
+  const showsAgg = useMemo(() => {
+    const map = new Map();
+    rawCampaigns.forEach((r) => {
+      const ref = getRef(r);
+      const showname = (ref && ref.showname) ? ref.showname : 'Undefined';
+      if (!map.has(showname)) map.set(showname, { name: showname, cost: 0, clicks: 0, impressions: 0, conversions: 0, conversions_value: 0 });
+      const a = map.get(showname);
+      a.cost += costFromMicros(r.cost_micros);
+      a.clicks += num(r.clicks);
+      a.impressions += num(r.impressions);
+      a.conversions += num(r.conversions);
+      a.conversions_value += num(r.conversions_value);
+    });
+    return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
+  }, [rawCampaigns, getRef]);
+
   const dailyTrends = useMemo(() => {
     const map = new Map();
     rawCampaigns.forEach((r) => {
@@ -343,6 +413,7 @@ export function useGoogleAdsData() {
     kpis, compareKpis, campaignTypes: campaignTypesAgg, campaigns: campaignsAgg,
     adGroups: adGroupsAgg, keywords: keywordsAgg,
     geoData: geoAgg, conversionsData: conversionsAgg, dailyTrends, compareDailyTrends,
+    countryData: countryAgg, productData: productAgg, showsData: showsAgg,
     rowCounts: { campaigns: rawCampaigns.length, adGroups: rawAdGroups.length, keywords: rawKeywords.length },
   };
 }
