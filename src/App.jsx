@@ -11,6 +11,7 @@ import { GoogleAdsPage } from './pages/GoogleAdsPage';
 import { MetaReportPage } from './pages/MetaReportPage';
 import { TiktokReportPage } from './pages/TiktokReportPage';
 import { RedditReportPage } from './pages/RedditReportPage';
+import { CombinedReportPage } from './pages/CombinedReportPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 
@@ -38,6 +39,7 @@ function CurrentPage() {
   if (currentPage === 'meta-ads') return <MetaReportPage />;
   if (currentPage === 'tiktok-ads') return <TiktokReportPage />;
   if (currentPage === 'reddit-ads') return <RedditReportPage />;
+  if (currentPage === 'combined-reporting') return <CombinedReportPage />;
   if (currentPage === 'settings') return <SettingsPage />;
 
   const config = PLACEHOLDER_PAGES[currentPage];

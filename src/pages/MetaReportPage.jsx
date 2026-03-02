@@ -42,14 +42,14 @@ function exportCSV(columns, rows, filename) {
 const TABS = [
   { id: 'campaigns', label: 'Campaigns', title: 'CAMPAIGNS STATISTICS', searchPlaceholder: 'Search by Campaign name...', nameColLabel: 'Campaign Name', totalLabel: (n) => `All Campaigns (${n})` },
   { id: 'adsets', label: 'Ad Sets', title: 'AD SETS STATISTICS', searchPlaceholder: 'Search by Ad Set name...', nameColLabel: 'Ad Set Name', totalLabel: (n) => `All Ad Sets (${n})` },
+  { id: 'country', label: 'Country', title: 'COUNTRY STATISTICS', searchPlaceholder: 'Search by Country...', nameColLabel: 'Country', totalLabel: (n) => `All Countries (${n})` },
+  { id: 'product', label: 'Product', title: 'PRODUCT STATISTICS', searchPlaceholder: 'Search by Product...', nameColLabel: 'Product', totalLabel: (n) => `All Products (${n})` },
+  { id: 'shows', label: 'Show', title: 'SHOW STATISTICS', searchPlaceholder: 'Search by Show...', nameColLabel: 'Show', totalLabel: (n) => `All Shows (${n})` },
   { id: 'placements', label: 'Placements', title: 'PLACEMENTS STATISTICS', searchPlaceholder: 'Search by Placement...', nameColLabel: 'Placement', totalLabel: (n) => `All Placements (${n})` },
   { id: 'day', label: 'Day', title: 'DAY STATISTICS', searchPlaceholder: 'Search by Day...', nameColLabel: 'Day', totalLabel: (n) => `All Days (${n})` },
   { id: 'ads', label: 'Ads', title: 'ADS STATISTICS', searchPlaceholder: 'Search by Ad name...', nameColLabel: 'Ad Name', totalLabel: (n) => `All Ads (${n})` },
   { id: 'platform', label: 'Platform', title: 'PLATFORM STATISTICS', searchPlaceholder: 'Search by Platform...', nameColLabel: 'Platform', totalLabel: (n) => `All Platforms (${n})` },
   { id: 'platformdevice', label: 'Platform Device', title: 'PLATFORM DEVICE STATISTICS', searchPlaceholder: 'Search by Device...', nameColLabel: 'Device', totalLabel: (n) => `All Devices (${n})` },
-  { id: 'country', label: 'Country', title: 'COUNTRY STATISTICS', searchPlaceholder: 'Search by Country...', nameColLabel: 'Country', totalLabel: (n) => `All Countries (${n})` },
-  { id: 'product', label: 'Product', title: 'PRODUCT STATISTICS', searchPlaceholder: 'Search by Product...', nameColLabel: 'Product', totalLabel: (n) => `All Products (${n})` },
-  { id: 'shows', label: 'Shows', title: 'SHOWS STATISTICS', searchPlaceholder: 'Search by Show...', nameColLabel: 'Show', totalLabel: (n) => `All Shows (${n})` },
 ];
 
 function computeTotals(rows) {
@@ -598,6 +598,11 @@ export function MetaReportPage() {
 
           {!loading && (
             <>
+              {['country', 'product', 'shows'].includes(activeTab) && (
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+                  Source: <strong>facebook_campaigns_reference_data</strong> — {currentTabConfig.nameColLabel} matched by campaign name.
+                </p>
+              )}
               <div className="panel">
                 <div className="panel-body no-padding">
                   <div className="table-wrapper">

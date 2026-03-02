@@ -79,6 +79,17 @@ function calendarDays(from, to) {
 
 const DATE_COL = 'day';
 
+/**
+ * facebook_campaigns_reference_data field mapping.
+ * Common key with facebook_campaigns_data: campaign_name (used to fetch Country, Product, Shows).
+ */
+const CAMPAIGN_REFERENCE_FIELDS = 'id,campaign_id,campaign_name,country,product_type,showname';
+
+/** Normalize campaign name for matching: trim, lowercase, collapse multiple spaces (reference vs performance may differ slightly). */
+function normalizeCampaignKey(s) {
+  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 function addMetrics(o) {
   const cost = o.cost;
   const impressions = o.impressions;
@@ -193,8 +204,8 @@ export function useMetaCampaignsData() {
       // Update reference fetchers to accept the new (columns, options) pattern
       if (!campaignRef) {
         fetches.push(fetchAllRowsConcurrently(
-          (cols = '*', opts = {}) => supabase.from('facebook_campaigns_reference_data').select(cols, opts), 
-          'campaign_id,campaign_name,country,product_type,showname'
+          (cols = '*', opts = {}) => supabase.from('facebook_campaigns_reference_data').select(cols, opts),
+          CAMPAIGN_REFERENCE_FIELDS
         ));
       }
       if (!adsetRef) {
@@ -226,38 +237,59 @@ export function useMetaCampaignsData() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  /**
+   * Map from facebook_campaigns_reference_data keyed only by campaign_name (common key with facebook_campaigns_data).
+   * Used to fetch Country, Product, and Shows by matching campaign_name between the two tables.
+   */
   const campaignRefMap = useMemo(() => {
     const m = new Map();
     const arr = campaignRef || [];
     for (let i = 0; i < arr.length; i++) {
       const r = arr[i];
       const nameKey = (r.campaign_name || '').trim();
-      const refVal = { campaign_name: r.campaign_name, country: r.country ?? '', product_type: r.product_type ?? '', showname: r.showname ?? '' };
+      const normKey = normalizeCampaignKey(r.campaign_name);
+      const refVal = {
+        id: r.id,
+        campaign_id: r.campaign_id,
+        campaign_name: r.campaign_name,
+        country: r.country ?? '',
+        product_type: r.product_type ?? '',
+        showname: (() => {
+          const v = r.showname ?? r.show_name ?? '';
+          return (v != null && String(v).trim() !== '') ? String(v).trim() : '';
+        })(),
+      };
       if (nameKey && !m.has(nameKey)) m.set(nameKey, refVal);
-      const id = r.campaign_id != null ? String(r.campaign_id) : '';
-      if (id && !m.has(id)) m.set(id, refVal);
+      if (normKey && !m.has(normKey)) m.set(normKey, refVal);
     }
     return m;
   }, [campaignRef]);
 
-  /** OPTIMIZATION 4: Local filter only runs on Product Type because Supabase handles the rest */
+  /** OPTIMIZATION 4: Local filter only runs on Product Type; ref lookup by campaign_name (common key). */
   const filteredRows = useMemo(() => {
     if (filters.productType === 'all') return rawRows; 
 
     const out = [];
+    const getRefByCampaignName = (campaignName) => {
+      const nameKey = (campaignName || '').trim();
+      const normKey = normalizeCampaignKey(campaignName);
+      return (nameKey ? campaignRefMap.get(nameKey) : null) || (normKey ? campaignRefMap.get(normKey) : null);
+    };
     for (let i = 0; i < rawRows.length; i++) {
       const r = rawRows[i];
-      const ref = campaignRefMap.get(String(r.campaign_id)) || (r.campaign_name ? campaignRefMap.get((r.campaign_name || '').trim()) : null);
+      const ref = getRefByCampaignName(r.campaign_name);
       const pt = (ref && ref.product_type) ? ref.product_type : '';
       if (pt === filters.productType) out.push(r);
     }
     return out;
   }, [rawRows, campaignRefMap, filters.productType]);
 
-  const getRef = useCallback((r) => {
-    const cid = r.campaign_id != null ? String(r.campaign_id) : 'Undefined';
-    const nameKey = (r.campaign_name || '').trim();
-    return campaignRefMap.get(cid) || (nameKey ? campaignRefMap.get(nameKey) : null);
+  /** Lookup reference by campaign_name only (common key between facebook_campaigns_data and facebook_campaigns_reference_data for Country, Product, Shows). */
+  const getRef = useCallback((rowOrCampaignName) => {
+    const campaignName = typeof rowOrCampaignName === 'string' ? rowOrCampaignName : (rowOrCampaignName && rowOrCampaignName.campaign_name);
+    const nameKey = (campaignName || '').trim();
+    const normKey = normalizeCampaignKey(campaignName);
+    return (nameKey ? campaignRefMap.get(nameKey) : null) || (normKey ? campaignRefMap.get(normKey) : null);
   }, [campaignRefMap]);
 
   /** * OPTIMIZATION 5: Splitting Aggregations
@@ -333,11 +365,12 @@ export function useMetaCampaignsData() {
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
   }, [filteredRows]);
 
+  /** Country aggregation: same logic as Reddit — reference by campaign_name, fallback "Unknown". */
   const countries = useMemo(() => {
     const map = new Map();
     filteredRows.forEach(r => {
-      const ref = getRef(r);
-      const country = (ref && ref.country) ? ref.country : 'Undefined';
+      const ref = getRef(r.campaign_name);
+      const country = (ref && ref.country) ? ref.country : 'Unknown';
       if (!map.has(country)) map.set(country, { key: country, name: country, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
       const a = map.get(country);
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
@@ -345,25 +378,27 @@ export function useMetaCampaignsData() {
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
   }, [filteredRows, getRef]);
 
+  /** Product aggregation: same logic as Reddit — reference by campaign_name, fallback "Unknown". */
   const products = useMemo(() => {
     const map = new Map();
     filteredRows.forEach(r => {
-      const ref = getRef(r);
-      const product_type = (ref && ref.product_type) ? ref.product_type : 'Undefined';
-      if (!map.has(product_type)) map.set(product_type, { key: product_type, name: product_type, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
-      const a = map.get(product_type);
+      const ref = getRef(r.campaign_name);
+      const product = (ref && ref.product_type) ? ref.product_type : 'Unknown';
+      if (!map.has(product)) map.set(product, { key: product, name: product, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = map.get(product);
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
   }, [filteredRows, getRef]);
 
+  /** Shows aggregation: same logic as Reddit — reference by campaign_name, fallback "Unknown". */
   const shows = useMemo(() => {
     const map = new Map();
     filteredRows.forEach(r => {
-      const ref = getRef(r);
-      const showname = (ref && ref.showname) ? ref.showname : 'Undefined';
-      if (!map.has(showname)) map.set(showname, { key: showname, name: showname, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
-      const a = map.get(showname);
+      const ref = getRef(r.campaign_name);
+      const show = (ref && ref.showname) ? ref.showname : 'Unknown';
+      if (!map.has(show)) map.set(show, { key: show, name: show, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
+      const a = map.get(show);
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
