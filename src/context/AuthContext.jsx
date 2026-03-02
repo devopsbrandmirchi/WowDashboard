@@ -4,7 +4,10 @@ import { supabase } from '../lib/supabase.js';
 const AuthContext = createContext(null);
 
 const DEV_BYPASS = import.meta.env.DEV;
+const AUTH_BYPASS = import.meta.env.VITE_AUTH_BYPASS === 'true' || import.meta.env.VITE_AUTH_BYPASS === '1';
 const SUPABASE_TIMEOUT_MS = 5000;
+
+const BYPASS_USER = { email: 'guest@localhost', user_metadata: { full_name: 'Guest' } };
 
 function withTimeout(promise, ms) {
   return Promise.race([
@@ -14,14 +17,15 @@ function withTimeout(promise, ms) {
 }
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(AUTH_BYPASS ? BYPASS_USER : null);
   const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [devMode, setDevMode] = useState(false);
+  const [loading, setLoading] = useState(!AUTH_BYPASS);
+  const [devMode, setDevMode] = useState(AUTH_BYPASS);
 
   const isAuthenticated = !!session || devMode;
 
   useEffect(() => {
+    if (AUTH_BYPASS) return;
     withTimeout(supabase.auth.getSession(), SUPABASE_TIMEOUT_MS)
       .then(({ data: { session: s } }) => {
         if (s) {
