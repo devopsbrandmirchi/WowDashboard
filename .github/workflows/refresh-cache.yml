@@ -2,8 +2,8 @@ name: Refresh Subscription Cache
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # Every 6 hours
-  workflow_dispatch:  # Manual trigger button
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
 
 jobs:
   refresh:
@@ -15,10 +15,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - run: pip install requests
+      - run: pip install psycopg2-binary
 
       - name: Refresh cache
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python refresh_cache.py
