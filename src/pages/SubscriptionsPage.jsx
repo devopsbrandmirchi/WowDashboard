@@ -14,6 +14,8 @@ const TABS = [
   { id: 'plans', label: 'Plans' },
   { id: 'countries', label: 'Countries' },
   { id: 'platforms', label: 'Platforms' },
+  { id: 'frequency', label: 'Frequency' },
+  { id: 'status', label: 'Status' },
   { id: 'churn', label: 'Churn Reasons' },
 ];
 
@@ -151,7 +153,7 @@ export function SubscriptionsPage() {
   const {
     filters, batchUpdateFilters, fetchData, loading, error,
     kpis, compareKpis, dailyTrends, compareDailyTrends,
-    plansData, countriesData, platformsData, churnReasonsData,
+    plansData, countriesData, platformsData, frequencyData, statusData, churnReasonsData,
     fetchEmailList, emailListLoading, lastUpdated,
   } = useSubscriptionsData();
 
@@ -162,8 +164,8 @@ export function SubscriptionsPage() {
   const [kpiExpanded, setKpiExpanded] = useState(null);
   const [kpiExpandedRows, setKpiExpandedRows] = useState([]);
   const kpiFetchKeyRef = useRef(null);
-  const [sort, setSort] = useState({ plans: { col: 'subscribers', dir: 'desc' }, countries: { col: 'active', dir: 'desc' }, platforms: { col: 'active', dir: 'desc' }, churn: { col: 'count', dir: 'desc' } });
-  const [pg, setPg] = useState({ plans: 1, countries: 1, platforms: 1, churn: 1 });
+  const [sort, setSort] = useState({ plans: { col: 'active', dir: 'desc' }, countries: { col: 'active', dir: 'desc' }, platforms: { col: 'active', dir: 'desc' }, frequency: { col: 'active', dir: 'desc' }, status: { col: 'total', dir: 'desc' }, churn: { col: 'count', dir: 'desc' } });
+  const [pg, setPg] = useState({ plans: 1, countries: 1, platforms: 1, frequency: 1, status: 1, churn: 1 });
   const [expanded, setExpanded] = useState({});
   const [expandedRowData, setExpandedRowData] = useState({});
   const [hiddenCols, setHiddenCols] = useState({});
@@ -213,10 +215,10 @@ export function SubscriptionsPage() {
     const keys = Object.keys(expanded).filter((k) => expanded[k]);
     keys.forEach((expandKey) => {
       if (expandedRowData[expandKey]) return;
-      const m = expandKey.match(/^(plan|country|platform|churn)_(.+)$/);
+      const m = expandKey.match(/^(plan|country|platform|frequency|status|churn)_(.+)$/);
       if (!m) return;
       const [, type, filterKey] = m;
-      const metricKey = type === 'plan' ? 'by_plan' : type === 'country' ? 'by_country' : type === 'platform' ? 'by_platform' : 'by_churn_reason';
+      const metricKey = type === 'plan' ? 'by_plan' : type === 'country' ? 'by_country' : type === 'platform' ? 'by_platform' : type === 'frequency' ? 'by_frequency' : type === 'status' ? 'by_status' : 'by_churn_reason';
       setExpandedRowData((prev) => ({ ...prev, [expandKey]: { loading: true, rows: [] } }));
       fetchEmailList(metricKey, filterKey).then((rows) => {
         setExpandedRowData((prev) => ({ ...prev, [expandKey]: { loading: false, rows } }));
@@ -367,37 +369,49 @@ export function SubscriptionsPage() {
   };
 
   const plansCols = [
-    { col: 'planName', label: 'Plan Name', cell: (r) => r.planName, total: () => 'Total' },
-    { col: 'subscribers', label: '# Subscribers', align: 'r', cell: (r) => fI(r.subscribers), total: (t) => t ? fI(t.subscribers) : '' },
-    { col: 'new', label: 'New (period)', align: 'r', cell: (r) => fI(r.new), total: (t) => t ? fI(t.new) : '' },
-    { col: 'cancelled', label: 'Cancelled (period)', align: 'r', cell: (r) => fI(r.cancelled), total: (t) => t ? fI(t.cancelled) : '' },
-    { col: 'net', label: 'Net', align: 'r', cell: (r) => fI(r.net), total: () => '' },
+    { col: 'planName', label: 'Plan', cell: (r) => r.planName, total: () => 'Total' },
+    { col: 'total', label: 'Total', align: 'r', cell: (r) => fI(r.total), total: (t) => t ? fI(t.total) : '' },
+    { col: 'active', label: 'Active', align: 'r', cell: (r) => fI(r.active), total: (t) => t ? fI(t.active) : '' },
+    { col: 'cancelled', label: 'Cancelled', align: 'r', cell: (r) => fI(r.cancelled), total: (t) => t ? fI(t.cancelled) : '' },
+    { col: 'expired', label: 'Expired', align: 'r', cell: (r) => fI(r.expired), total: (t) => t ? fI(t.expired) : '' },
+    { col: 'revenue', label: 'Revenue', align: 'r', cell: (r) => fU(r.revenue), total: (t) => t ? fU(t.revenue) : '' },
     { col: 'avgPrice', label: 'Avg Price', align: 'r', cell: (r) => fU(r.avgPrice), total: () => '' },
-    { col: 'totalRevenue', label: 'Total Revenue', align: 'r', cell: (r) => fU(r.totalRevenue), total: () => '' },
-    { col: 'churnRate', label: 'Churn Rate', align: 'r', cell: (r) => fP(r.churnRate), total: () => '' },
     { col: 'pctOfTotal', label: '% of Total', align: 'r', cell: (r) => fP(r.pctOfTotal), total: () => '100%' },
   ];
 
   const countriesCols = [
     { col: 'country', label: 'Country', cell: (r) => r.country, total: () => 'Total' },
-    { col: 'active', label: '# Active', align: 'r', cell: (r) => fI(r.active), total: (t) => t ? fI(t.active) : '' },
-    { col: 'new', label: 'New (period)', align: 'r', cell: (r) => fI(r.new), total: (t) => t ? fI(t.new) : '' },
-    { col: 'cancelled', label: 'Cancelled (period)', align: 'r', cell: (r) => fI(r.cancelled), total: (t) => t ? fI(t.cancelled) : '' },
-    { col: 'net', label: 'Net', align: 'r', cell: (r) => fI(r.net), total: () => '' },
+    { col: 'total', label: 'Total', align: 'r', cell: (r) => fI(r.total), total: (t) => t ? fI(t.total) : '' },
+    { col: 'active', label: 'Active', align: 'r', cell: (r) => fI(r.active), total: (t) => t ? fI(t.active) : '' },
+    { col: 'cancelled', label: 'Cancelled', align: 'r', cell: (r) => fI(r.cancelled), total: (t) => t ? fI(t.cancelled) : '' },
+    { col: 'expired', label: 'Expired', align: 'r', cell: (r) => fI(r.expired), total: (t) => t ? fI(t.expired) : '' },
+    { col: 'trials', label: 'Trials', align: 'r', cell: (r) => fI(r.trials), total: (t) => t ? fI(t.trials) : '' },
+    { col: 'converted', label: 'Converted', align: 'r', cell: (r) => fI(r.converted), total: (t) => t ? fI(t.converted) : '' },
+    { col: 'revenue', label: 'Revenue', align: 'r', cell: (r) => fU(r.revenue), total: (t) => t ? fU(t.revenue) : '' },
     { col: 'avgPrice', label: 'Avg Price', align: 'r', cell: (r) => fU(r.avgPrice), total: () => '' },
-    { col: 'avgLifetimeValue', label: 'Avg LTV', align: 'r', cell: (r) => fU(r.avgLifetimeValue), total: () => '' },
-    { col: 'churnRate', label: 'Churn Rate', align: 'r', cell: (r) => fP(r.churnRate), total: () => '' },
     { col: 'pctOfTotal', label: '% of Total', align: 'r', cell: (r) => fP(r.pctOfTotal), total: () => '100%' },
   ];
 
   const platformsCols = [
     { col: 'platform', label: 'Platform', cell: (r) => r.platform, total: () => 'Total' },
-    { col: 'active', label: '# Active', align: 'r', cell: (r) => fI(r.active), total: (t) => t ? fI(t.active) : '' },
-    { col: 'new', label: 'New (period)', align: 'r', cell: (r) => fI(r.new), total: (t) => t ? fI(t.new) : '' },
-    { col: 'cancelled', label: 'Cancelled (period)', align: 'r', cell: (r) => fI(r.cancelled), total: (t) => t ? fI(t.cancelled) : '' },
-    { col: 'monthly', label: 'Monthly', align: 'r', cell: (r) => fI(r.monthly), total: () => '' },
-    { col: 'yearly', label: 'Yearly', align: 'r', cell: (r) => fI(r.yearly), total: () => '' },
+    { col: 'total', label: 'Total', align: 'r', cell: (r) => fI(r.total), total: (t) => t ? fI(t.total) : '' },
+    { col: 'active', label: 'Active', align: 'r', cell: (r) => fI(r.active), total: (t) => t ? fI(t.active) : '' },
+    { col: 'cancelled', label: 'Cancelled', align: 'r', cell: (r) => fI(r.cancelled), total: (t) => t ? fI(t.cancelled) : '' },
+    { col: 'pctOfTotal', label: '% of Total', align: 'r', cell: (r) => fP(r.pctOfTotal), total: () => '100%' },
+  ];
+
+  const frequencyCols = [
+    { col: 'frequency', label: 'Frequency', cell: (r) => r.frequency, total: () => 'Total' },
+    { col: 'total', label: 'Total', align: 'r', cell: (r) => fI(r.total), total: (t) => t ? fI(t.total) : '' },
+    { col: 'active', label: 'Active', align: 'r', cell: (r) => fI(r.active), total: (t) => t ? fI(t.active) : '' },
     { col: 'avgPrice', label: 'Avg Price', align: 'r', cell: (r) => fU(r.avgPrice), total: () => '' },
+    { col: 'revenue', label: 'Revenue', align: 'r', cell: (r) => fU(r.revenue), total: (t) => t ? fU(t.revenue) : '' },
+    { col: 'pctOfTotal', label: '% of Total', align: 'r', cell: (r) => fP(r.pctOfTotal), total: () => '100%' },
+  ];
+
+  const statusCols = [
+    { col: 'status', label: 'Status', cell: (r) => r.status, total: () => 'Total' },
+    { col: 'total', label: 'Total', align: 'r', cell: (r) => fI(r.total), total: (t) => t ? fI(t.total) : '' },
     { col: 'pctOfTotal', label: '% of Total', align: 'r', cell: (r) => fP(r.pctOfTotal), total: () => '100%' },
   ];
 
@@ -409,8 +423,8 @@ export function SubscriptionsPage() {
     { col: 'pctOfCancellations', label: '% of Cancellations', align: 'r', cell: (r) => fP(r.pctOfCancellations), total: () => '100%' },
   ];
 
-  const dataMap = { plans: plansData, countries: countriesData, platforms: platformsData, churn: churnReasonsData };
-  const colMap = { plans: plansCols, countries: countriesCols, platforms: platformsCols, churn: churnCols };
+  const dataMap = { plans: plansData, countries: countriesData, platforms: platformsData, frequency: frequencyData, status: statusData, churn: churnReasonsData };
+  const colMap = { plans: plansCols, countries: countriesCols, platforms: platformsCols, frequency: frequencyCols, status: statusCols, churn: churnCols };
 
   const handleCSV = () => {
     const rawDataTab = dataMap[activeTab];
@@ -421,9 +435,11 @@ export function SubscriptionsPage() {
     exportCSV(csvCols, rawDataTab, `subscriptions-${activeTab}.csv`);
   };
 
-  const totalRowForPlans = (data) => data?.length ? { subscribers: data.reduce((s, x) => s + x.subscribers, 0), new: data.reduce((s, x) => s + x.new, 0), cancelled: data.reduce((s, x) => s + x.cancelled, 0), pctOfTotal: 100 } : null;
-  const totalRowForCountries = (data) => data?.length ? { active: data.reduce((s, x) => s + x.active, 0), new: data.reduce((s, x) => s + x.new, 0), cancelled: data.reduce((s, x) => s + x.cancelled, 0), pctOfTotal: 100 } : null;
-  const totalRowForPlatforms = (data) => data?.length ? { active: data.reduce((s, x) => s + x.active, 0), new: data.reduce((s, x) => s + x.new, 0), cancelled: data.reduce((s, x) => s + x.cancelled, 0), pctOfTotal: 100 } : null;
+  const totalRowForPlans = (data) => data?.length ? { total: data.reduce((s, x) => s + x.total, 0), active: data.reduce((s, x) => s + x.active, 0), cancelled: data.reduce((s, x) => s + x.cancelled, 0), expired: data.reduce((s, x) => s + x.expired, 0), revenue: data.reduce((s, x) => s + x.revenue, 0), pctOfTotal: 100 } : null;
+  const totalRowForCountries = (data) => data?.length ? { total: data.reduce((s, x) => s + x.total, 0), active: data.reduce((s, x) => s + x.active, 0), cancelled: data.reduce((s, x) => s + x.cancelled, 0), expired: data.reduce((s, x) => s + x.expired, 0), trials: data.reduce((s, x) => s + x.trials, 0), converted: data.reduce((s, x) => s + x.converted, 0), revenue: data.reduce((s, x) => s + x.revenue, 0), pctOfTotal: 100 } : null;
+  const totalRowForPlatforms = (data) => data?.length ? { total: data.reduce((s, x) => s + x.total, 0), active: data.reduce((s, x) => s + x.active, 0), cancelled: data.reduce((s, x) => s + x.cancelled, 0), pctOfTotal: 100 } : null;
+  const totalRowForFrequency = (data) => data?.length ? { total: data.reduce((s, x) => s + x.total, 0), active: data.reduce((s, x) => s + x.active, 0), revenue: data.reduce((s, x) => s + x.revenue, 0), pctOfTotal: 100 } : null;
+  const totalRowForStatus = (data) => data?.length ? { total: data.reduce((s, x) => s + x.total, 0), pctOfTotal: 100 } : null;
   const totalRowForChurn = (data) => data?.length ? { count: data.reduce((s, x) => s + x.count, 0), pctOfCancellations: 100 } : null;
 
   return (
@@ -581,7 +597,7 @@ export function SubscriptionsPage() {
           <div className="gads-tabs-row">
             <div className="gads-tabs">
               {TABS.map((tab) => {
-                const countMap = { plans: plansData.length, countries: countriesData.length, platforms: platformsData.length, churn: churnReasonsData.length };
+                const countMap = { plans: plansData.length, countries: countriesData.length, platforms: platformsData.length, frequency: frequencyData.length, status: statusData.length, churn: churnReasonsData.length };
                 const count = countMap[tab.id];
                 return <button key={tab.id} type="button" className={`gads-tab ${activeTab === tab.id ? 'active' : ''}`} onClick={() => setActiveTab(tab.id)}>{tab.label}{count != null && !loading ? ` (${count})` : ''}</button>;
               })}
@@ -622,6 +638,8 @@ export function SubscriptionsPage() {
           {!loading && activeTab === 'plans' && renderTable('plans', plansData, plansCols, { rowKey: (r) => r.planName, expandKey: (r) => 'plan_' + (r._filterKey || r.planName), subRows: (expandKey) => subRowContent(expandKey), totalRow: totalRowForPlans })}
           {!loading && activeTab === 'countries' && renderTable('countries', countriesData, countriesCols, { rowKey: (r) => r.country, expandKey: (r) => 'country_' + (r._filterKey || r.country), subRows: (expandKey) => subRowContent(expandKey), totalRow: totalRowForCountries })}
           {!loading && activeTab === 'platforms' && renderTable('platforms', platformsData, platformsCols, { rowKey: (r) => r.platform, expandKey: (r) => 'platform_' + (r._filterKey || r.platform), subRows: (expandKey) => subRowContent(expandKey), totalRow: totalRowForPlatforms })}
+          {!loading && activeTab === 'frequency' && renderTable('frequency', frequencyData, frequencyCols, { rowKey: (r) => r.frequency, expandKey: (r) => 'frequency_' + (r._filterKey || r.frequency), subRows: (expandKey) => subRowContent(expandKey), totalRow: totalRowForFrequency })}
+          {!loading && activeTab === 'status' && renderTable('status', statusData, statusCols, { rowKey: (r) => r.status, expandKey: (r) => 'status_' + (r._filterKey || r.status), subRows: (expandKey) => subRowContent(expandKey), totalRow: totalRowForStatus })}
           {!loading && activeTab === 'churn' && renderTable('churn', churnReasonsData, churnCols, { rowKey: (r) => r.reason, expandKey: (r) => 'churn_' + (r._filterKey || r.reason), subRows: (expandKey) => subRowContent(expandKey), totalRow: totalRowForChurn })}
         </div>
       </div>
