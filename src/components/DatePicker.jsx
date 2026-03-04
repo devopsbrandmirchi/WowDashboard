@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 const PRESETS = [
   { label: 'All Data', key: 'all' },
+  { label: '2025', key: '2025' },
   { label: 'Today', key: 'today' },
   { label: 'Yesterday', key: 'yesterday' },
   { label: 'Last 7 Days', key: 'last7' },
@@ -84,6 +85,7 @@ function resolvePreset(key) {
       return { from: first, to: last };
     }
     case 'all': return { from: new Date(2020, 0, 1), to: today };
+    case '2025': return { from: new Date(2025, 0, 1), to: new Date(2025, 11, 31) };
     default: return null;
   }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useLocation } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { useApp } from './context/AppContext';
 import { LoginPage } from './pages/LoginPage';
@@ -17,6 +17,8 @@ import { SettingsPage } from './pages/SettingsPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { SubscriptionsPage } from './pages/SubscriptionsPage';
 import { RevenueDashboardPage } from './pages/RevenueDashboardPage';
+import { VimeoAnalyticsPage } from './pages/VimeoAnalyticsPage';
+import { SubscriberIntelligencePage } from './pages/SubscriberIntelligencePage';
 
 const PLACEHOLDER_PAGES = {
   'bing-ads':     { title: 'Bing Ads', subtitle: 'Microsoft Advertising Performance' },
@@ -34,20 +36,57 @@ const PLACEHOLDER_PAGES = {
   'events':       { title: 'Events / Special', subtitle: 'Special Campaign Performance' },
 };
 
-function CurrentPage() {
-  const { currentPage } = useApp();
+const PATH_TO_PAGE = {
+  '/': 'dashboard',
+  '/subscriptions/analytics': 'subscriptions-analytics',
+  '/subscriptions/subscribers': 'subscriptions-subscribers',
+  '/combined-reporting': 'combined-reporting',
+  '/google-ads': 'google-ads',
+  '/meta-ads': 'meta-ads',
+  '/bing-ads': 'bing-ads',
+  '/tiktok-ads': 'tiktok-ads',
+  '/reddit-ads': 'reddit-ads',
+  '/amazon-ads': 'amazon-ads',
+  '/dsp': 'dsp',
+  '/dating-apps': 'dating-apps',
+  '/ctv': 'ctv',
+  '/ga4': 'ga4',
+  '/email': 'email',
+  '/ghl': 'ghl',
+  '/ott': 'ott',
+  '/subscriptions': 'subscriptions',
+  '/revenue-dashboard': 'revenue-dashboard',
+  '/seo': 'seo',
+  '/geo': 'geo',
+  '/creatives': 'creatives',
+  '/events': 'events',
+  '/settings': 'settings',
+};
 
-  if (currentPage === 'dashboard') return <DashboardPage />;
-  if (currentPage === 'google-ads') return <GoogleAdsPage />;
-  if (currentPage === 'meta-ads') return <MetaReportPage />;
-  if (currentPage === 'tiktok-ads') return <TiktokReportPage />;
-  if (currentPage === 'reddit-ads') return <RedditReportPage />;
-  if (currentPage === 'combined-reporting') return <CombinedReportPage />;
-  if (currentPage === 'settings') return <SettingsPage />;
-  if (currentPage === 'subscriptions') return <SubscriptionsPage />;
-  if (currentPage === 'revenue-dashboard') return <RevenueDashboardPage />;
+function CurrentPage({ forcePage }) {
+  const { currentPage, setCurrentPage } = useApp();
+  const location = useLocation();
 
-  const config = PLACEHOLDER_PAGES[currentPage];
+  useEffect(() => {
+    const pageFromPath = PATH_TO_PAGE[location.pathname];
+    if (pageFromPath) setCurrentPage(pageFromPath);
+  }, [location.pathname, setCurrentPage]);
+
+  const page = forcePage || currentPage;
+
+  if (page === 'dashboard') return <DashboardPage />;
+  if (page === 'google-ads') return <GoogleAdsPage />;
+  if (page === 'meta-ads') return <MetaReportPage />;
+  if (page === 'tiktok-ads') return <TiktokReportPage />;
+  if (page === 'reddit-ads') return <RedditReportPage />;
+  if (page === 'combined-reporting') return <CombinedReportPage />;
+  if (page === 'settings') return <SettingsPage />;
+  if (page === 'subscriptions') return <SubscriptionsPage />;
+  if (page === 'subscriptions-analytics') return <VimeoAnalyticsPage />;
+  if (page === 'subscriptions-subscribers') return <SubscriberIntelligencePage />;
+  if (page === 'revenue-dashboard') return <RevenueDashboardPage />;
+
+  const config = PLACEHOLDER_PAGES[page];
   if (config) {
     return <PlaceholderPage title={config.title} subtitle={config.subtitle} />;
   }
@@ -55,13 +94,13 @@ function CurrentPage() {
   return <DashboardPage />;
 }
 
-function AppContent() {
+function AppContent({ forcePage }) {
   return (
     <div className="app-layout">
       <Sidebar />
       <main className="main-content">
         <Header />
-        <CurrentPage />
+        <CurrentPage forcePage={forcePage} />
       </main>
       <NotificationContainer />
     </div>
@@ -103,6 +142,8 @@ export default function App() {
   return (
     <>
       <Routes>
+        <Route path="/subscriptions/analytics" element={<AppContent forcePage="subscriptions-analytics" />} />
+        <Route path="/subscriptions/subscribers" element={<AppContent forcePage="subscriptions-subscribers" />} />
         <Route path="*" element={<AppContent />} />
       </Routes>
     </>
