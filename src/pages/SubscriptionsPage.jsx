@@ -25,17 +25,18 @@ const CHART_METRICS = [
   { key: 'revenue', label: 'Revenue', fmt: fU, color: '#F5A623', axis: 'right' },
 ];
 
-const KPI_LIST = [
-  { key: 'totalActive', label: 'TOTAL ACTIVE', fmt: fI, inverse: false },
+  const KPI_LIST = [
+  { key: 'totalActive', label: 'TOTAL ACTIVE', fmt: fI, inverse: false, noCompare: true },
   { key: 'newSubscribers', label: 'NEW SUBSCRIBERS', fmt: fI, inverse: false },
   { key: 'cancellations', label: 'CANCELLATIONS', fmt: fI, inverse: true },
   { key: 'netGrowth', label: 'NET GROWTH', fmt: (v) => (v >= 0 ? '+' : '') + fI(v), inverse: false },
-  { key: 'mrr', label: 'MRR', fmt: fU, inverse: false },
+  { key: 'mrr', label: 'MRR', fmt: fU, inverse: false, noCompare: true },
   { key: 'trialsStarted', label: 'TRIALS STARTED', fmt: fI, inverse: false },
   { key: 'trialConversions', label: 'TRIAL CONVERSIONS', fmt: fI, inverse: false },
   { key: 'convRate', label: 'CONV. RATE', fmt: (v) => fP(v), inverse: false },
   { key: 'avgRevenue', label: 'AVG REVENUE', fmt: fU, inverse: false },
   { key: 'churnRate', label: 'CHURN RATE', fmt: (v) => fP(v), inverse: true },
+  { key: 'totalLtv', label: 'TOTAL LTV', fmt: fU, inverse: false, noCompare: true },
 ];
 
 function sortRows(rows, col, dir) {
@@ -151,7 +152,7 @@ export function SubscriptionsPage() {
     filters, batchUpdateFilters, fetchData, loading, error,
     kpis, compareKpis, dailyTrends, compareDailyTrends,
     plansData, countriesData, platformsData, churnReasonsData,
-    fetchEmailList, emailListLoading,
+    fetchEmailList, emailListLoading, lastUpdated,
   } = useSubscriptionsData();
 
   const [activeTab, setActiveTab] = useState('plans');
@@ -225,11 +226,10 @@ export function SubscriptionsPage() {
 
   const handleDatePickerApply = useCallback(({ preset, dateFrom, dateTo, compareOn, compareFrom, compareTo }) => {
     batchUpdateFilters({ datePreset: preset, dateFrom: dateFrom || '', dateTo: dateTo || '', compareOn, compareFrom: compareFrom || '', compareTo: compareTo || '' });
-    setTimeout(() => fetchData(), 30);
-  }, [batchUpdateFilters, fetchData]);
+  }, [batchUpdateFilters]);
 
   const handleKpiClick = useCallback(async (key) => {
-    const expandable = ['totalActive', 'cancellations', 'trialsStarted', 'trialConversions', 'mrr', 'avgRevenue', 'churnRate', 'newSubscribers'];
+    const expandable = ['totalActive', 'totalLtv', 'cancellations', 'trialsStarted', 'trialConversions', 'mrr', 'avgRevenue', 'churnRate', 'newSubscribers'];
     if (!expandable.includes(key)) return;
     if (kpiExpanded === key) {
       setKpiExpanded(null);
@@ -239,7 +239,7 @@ export function SubscriptionsPage() {
     setKpiExpanded(key);
     setKpiExpandedRows([]);
     kpiFetchKeyRef.current = key;
-    const metricKey = key === 'totalActive' ? 'totalActive' : key === 'newSubscribers' ? 'newSubscribers' : key === 'cancellations' ? 'cancellations' : key === 'trialsStarted' ? 'trialsStarted' : key === 'trialConversions' ? 'trialConversions' : key === 'mrr' || key === 'avgRevenue' ? 'totalActive' : key === 'churnRate' ? 'cancellations' : 'totalActive';
+    const metricKey = key === 'totalActive' || key === 'totalLtv' ? 'totalActive' : key === 'newSubscribers' ? 'newSubscribers' : key === 'cancellations' ? 'cancellations' : key === 'trialsStarted' ? 'trialsStarted' : key === 'trialConversions' ? 'trialConversions' : key === 'mrr' || key === 'avgRevenue' ? 'totalActive' : key === 'churnRate' ? 'cancellations' : 'totalActive';
     const rows = await fetchEmailList(metricKey);
     if (kpiFetchKeyRef.current === key) setKpiExpandedRows(rows);
   }, [kpiExpanded, fetchEmailList]);
@@ -256,16 +256,18 @@ export function SubscriptionsPage() {
   useEffect(() => {
     if (chartCollapsed || !chartRef.current || !dailyTrends.length) return;
     if (chartInstance.current) { chartInstance.current.destroy(); chartInstance.current = null; }
-    const labels = dailyTrends.map((d) => { const p = d.date.split('-'); return parseInt(p[1]) + '/' + parseInt(p[2]); });
+    const labels = dailyTrends.map((d) => { const p = (d.day || d.date || '').split('-'); return p[1] && p[2] ? parseInt(p[1]) + '/' + parseInt(p[2]) : ''; });
     const datasets = [];
     const hasCompare = compareDailyTrends.length > 0;
 
+    const dayKey = (k) => (k === 'trialConversions' ? 'trial_conversions' : k === 'trialsStarted' ? 'trials_started' : k);
     CHART_METRICS.forEach((m) => {
       if (!chartActiveMetrics.includes(m.key)) return;
       const yAxisID = m.axis === 'right' ? 'y1' : 'y';
-      datasets.push({ label: m.label, data: dailyTrends.map((d) => +(d[m.key] || 0)), borderColor: m.color, backgroundColor: m.color + '18', tension: 0.35, fill: false, borderWidth: 2.5, pointRadius: 3, yAxisID });
+      const dataKey = dayKey(m.key);
+      datasets.push({ label: m.label, data: dailyTrends.map((d) => +(d[dataKey] || d[m.key] || 0)), borderColor: m.color, backgroundColor: m.color + '18', tension: 0.35, fill: false, borderWidth: 2.5, pointRadius: 3, yAxisID });
       if (hasCompare) {
-        const compData = compareDailyTrends.map((d) => +(d[m.key] || 0));
+        const compData = compareDailyTrends.map((d) => +(d[dayKey(m.key)] || d[m.key] || 0));
         while (compData.length < labels.length) compData.push(null);
         datasets.push({ label: m.label + ' (prev)', data: compData.slice(0, labels.length), borderColor: m.color + '80', backgroundColor: 'transparent', tension: 0.35, fill: false, borderWidth: 1.5, borderDash: [6, 4], pointRadius: 2, yAxisID });
       }
@@ -284,14 +286,14 @@ export function SubscriptionsPage() {
   const chartTotals = React.useMemo(() => {
     if (!dailyTrends.length) return {};
     const sums = { newSubscribers: 0, cancellations: 0, trialsStarted: 0, trialConversions: 0, revenue: 0 };
-    dailyTrends.forEach((d) => { sums.newSubscribers += d.newSubscribers || 0; sums.cancellations += d.cancellations || 0; sums.trialsStarted += d.trialsStarted || 0; sums.trialConversions += d.trialConversions || 0; sums.revenue += d.revenue || 0; });
+    dailyTrends.forEach((d) => { sums.newSubscribers += d.new_subscribers || d.newSubscribers || 0; sums.cancellations += d.cancellations || 0; sums.trialsStarted += d.trials_started || d.trialsStarted || 0; sums.trialConversions += d.trial_conversions || d.trialConversions || 0; sums.revenue += d.revenue || 0; });
     return sums;
   }, [dailyTrends]);
 
   const chartCompareTotals = React.useMemo(() => {
     if (!compareDailyTrends.length) return {};
     const sums = { newSubscribers: 0, cancellations: 0, trialsStarted: 0, trialConversions: 0, revenue: 0 };
-    compareDailyTrends.forEach((d) => { sums.newSubscribers += d.newSubscribers || 0; sums.cancellations += d.cancellations || 0; sums.trialsStarted += d.trialsStarted || 0; sums.trialConversions += d.trialConversions || 0; sums.revenue += d.revenue || 0; });
+    compareDailyTrends.forEach((d) => { sums.newSubscribers += d.new_subscribers || d.newSubscribers || 0; sums.cancellations += d.cancellations || 0; sums.trialsStarted += d.trials_started || d.trialsStarted || 0; sums.trialConversions += d.trial_conversions || d.trialConversions || 0; sums.revenue += d.revenue || 0; });
     return sums;
   }, [compareDailyTrends]);
 
@@ -434,6 +436,11 @@ export function SubscriptionsPage() {
               Subscriptions & Trials
             </h2>
             <p>Subscription performance, trials, churn & revenue analysis</p>
+            {lastUpdated && !loading && (
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                Last updated: {lastUpdated.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+              </p>
+            )}
           </div>
           <DateRangePicker
             preset={filters.datePreset}
@@ -504,7 +511,7 @@ export function SubscriptionsPage() {
             <div className="kpi-grid-6" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
               {KPI_LIST.map((k) => {
                 const val = kpis ? kpis[k.key] : 0;
-                const prev = compareKpis ? compareKpis[k.key] : null;
+                const prev = (k.noCompare || !compareKpis) ? null : compareKpis[k.key];
                 const d = kpiDelta(val, prev, k.inverse);
                 const hasExpand = !['netGrowth', 'convRate'].includes(k.key);
                 const isExpanded = kpiExpanded === k.key;

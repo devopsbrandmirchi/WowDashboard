@@ -3,26 +3,53 @@ import { supabase } from '../lib/supabase';
 
 function num(v) { return Number(v) || 0; }
 
-const CACHE_KEYS = [
-  'total_active',
-  'total_records',
-  'total_canceled',
-  'total_trials',
-  'total_converted',
-  'total_mrr',
-  'total_ltv',
-  'by_country',
-  'by_plan',
-  'by_platform',
-  'by_churn_reason',
-];
+function getMonthKey(dateStr) {
+  if (!dateStr) return null;
+  const [y, m] = dateStr.split('-');
+  return y && m ? `${y}-${m}` : null;
+}
+
+function prevMonthKey(monthKey) {
+  if (!monthKey) return null;
+  const [y, m] = monthKey.split('-').map(Number);
+  if (m === 1) return `${y - 1}-12`;
+  return `${y}-${String(m - 1).padStart(2, '0')}`;
+}
+
+function dayInRange(dayStr, fromStr, toStr) {
+  if (!dayStr || !fromStr || !toStr) return false;
+  return dayStr >= fromStr && dayStr <= toStr;
+}
+
+function resolvePresetDates(preset) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const pad = (n) => String(n).padStart(2, '0');
+  const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate() + n); return r; };
+  switch (preset) {
+    case 'today': return { from: iso(today), to: iso(today) };
+    case 'yesterday': { const y = addDays(today, -1); return { from: iso(y), to: iso(y) }; }
+    case 'last7': return { from: iso(addDays(today, -6)), to: iso(today) };
+    case 'last14': return { from: iso(addDays(today, -13)), to: iso(today) };
+    case 'last30': return { from: iso(addDays(today, -29)), to: iso(today) };
+    case 'this_month': return { from: iso(new Date(today.getFullYear(), today.getMonth(), 1)), to: iso(today) };
+    case 'last_month': {
+      const first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const last = new Date(today.getFullYear(), today.getMonth(), 0);
+      return { from: iso(first), to: iso(last) };
+    }
+    case 'all': return { from: '2020-01-01', to: iso(today) };
+    default: return null;
+  }
+}
 
 export function useSubscriptionsData() {
   const [filters, setFilters] = useState({
     datePreset: 'last30', dateFrom: '', dateTo: '',
     compareOn: false, compareFrom: '', compareTo: '',
   });
-  const [cache, setCache] = useState({});
+  const [cacheRows, setCacheRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [emailListLoading, setEmailListLoading] = useState(false);
@@ -41,21 +68,12 @@ export function useSubscriptionsData() {
     try {
       const { data, error: err } = await supabase
         .from('subscription_kpi_cache')
-        .select('metric_name, metric_value, metric_data')
-        .in('metric_name', CACHE_KEYS);
+        .select('*');
       if (err) throw err;
-
-      const map = {};
-      (data || []).forEach((row) => {
-        map[row.metric_name] = {
-          value: row.metric_value,
-          data: row.metric_data || null,
-        };
-      });
-      setCache(map);
+      setCacheRows(data || []);
     } catch (e) {
       setError(e?.message || 'Failed to fetch subscription cache');
-      setCache({});
+      setCacheRows([]);
     } finally {
       setLoading(false);
     }
@@ -63,41 +81,117 @@ export function useSubscriptionsData() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const getVal = (key) => num(cache[key]?.value ?? 0);
-  const getData = (key) => cache[key]?.data ?? [];
+  useEffect(() => {
+    if (!loading && !filters.dateFrom && !filters.dateTo && filters.datePreset) {
+      const resolved = resolvePresetDates(filters.datePreset);
+      if (resolved) batchUpdateFilters({ dateFrom: resolved.from, dateTo: resolved.to });
+    }
+  }, [loading, filters.dateFrom, filters.dateTo, filters.datePreset, batchUpdateFilters]);
 
-  const totalActive = getVal('total_active');
-  const totalCanceled = getVal('total_canceled');
-  const totalTrials = getVal('total_trials');
-  const totalConverted = getVal('total_converted');
-  const totalMrr = getVal('total_mrr');
-  const totalLtv = getVal('total_ltv');
+  const cache = useMemo(() => {
+    const map = {};
+    (cacheRows || []).forEach((row) => {
+      map[row.metric_name] = {
+        data: row.metric_data ?? null,
+        updated_at: row.updated_at ?? null,
+      };
+    });
+    return map;
+  }, [cacheRows]);
 
-  const kpis = useMemo(() => ({
-    totalActive,
-    newSubscribers: getVal('total_records'),
-    cancellations: totalCanceled,
-    netGrowth: getVal('total_records') - totalCanceled,
-    mrr: totalMrr,
-    trialsStarted: totalTrials,
-    trialConversions: totalConverted,
-    convRate: totalTrials > 0 ? (totalConverted / totalTrials) * 100 : 0,
-    avgRevenue: totalActive > 0 ? totalMrr / totalActive : 0,
-    churnRate: (totalActive + totalCanceled) > 0 ? (totalCanceled / (totalActive + totalCanceled)) * 100 : 0,
-  }), [cache]);
+  const lastUpdated = useMemo(() => {
+    const dates = Object.values(cache).map((v) => v.updated_at).filter(Boolean);
+    if (dates.length === 0) return null;
+    return new Date(Math.max(...dates.map((d) => new Date(d).getTime())));
+  }, [cache]);
 
-  const compareKpis = null;
+  const allTime = useMemo(() => cache.all_time?.data ?? {}, [cache]);
+  const monthlyArr = useMemo(() => (Array.isArray(cache.monthly?.data) ? cache.monthly.data : []), [cache]);
+  const dailyArr = useMemo(() => (Array.isArray(cache.daily?.data) ? cache.daily.data : []), [cache]);
+
+  const totalActive = num(allTime.total_active);
+  const totalMrr = num(allTime.total_mrr);
+  const totalLtv = num(allTime.total_ltv);
+  const totalCanceled = num(allTime.total_canceled);
+
+  const selectedMonthKey = useMemo(() => {
+    const to = filters.dateTo || filters.dateFrom;
+    return getMonthKey(to) || (monthlyArr.length ? monthlyArr[monthlyArr.length - 1]?.month : null);
+  }, [filters.dateFrom, filters.dateTo, monthlyArr]);
+
+  const prevMonthKeyVal = useMemo(() => prevMonthKey(selectedMonthKey), [selectedMonthKey]);
+
+  const selectedMonth = useMemo(() => {
+    if (!selectedMonthKey) return null;
+    return monthlyArr.find((m) => m.month === selectedMonthKey) ?? null;
+  }, [monthlyArr, selectedMonthKey]);
+
+  const prevMonth = useMemo(() => {
+    if (!prevMonthKeyVal) return null;
+    return monthlyArr.find((m) => m.month === prevMonthKeyVal) ?? null;
+  }, [monthlyArr, prevMonthKeyVal]);
+
+  const kpis = useMemo(() => {
+    const newSub = num(selectedMonth?.new_subscribers);
+    const canc = num(selectedMonth?.cancellations);
+    const trials = num(selectedMonth?.trials_started);
+    const conv = num(selectedMonth?.trial_conversions);
+    const rev = num(selectedMonth?.revenue);
+    return {
+      totalActive,
+      totalLtv,
+      newSubscribers: newSub,
+      cancellations: canc,
+      netGrowth: newSub - canc,
+      mrr: totalMrr,
+      trialsStarted: trials,
+      trialConversions: conv,
+      convRate: trials > 0 ? (conv / trials) * 100 : 0,
+      avgRevenue: newSub > 0 ? rev / newSub : 0,
+      churnRate: (totalActive + canc) > 0 ? (canc / (totalActive + canc)) * 100 : 0,
+    };
+  }, [totalActive, totalMrr, totalLtv, selectedMonth]);
+
+  const compareKpis = useMemo(() => {
+    if (!prevMonth) return null;
+    const newSub = num(prevMonth.new_subscribers);
+    const canc = num(prevMonth.cancellations);
+    const trials = num(prevMonth.trials_started);
+    const conv = num(prevMonth.trial_conversions);
+    const rev = num(prevMonth.revenue);
+    return {
+      totalActive,
+      newSubscribers: newSub,
+      cancellations: canc,
+      netGrowth: newSub - canc,
+      mrr: totalMrr,
+      trialsStarted: trials,
+      trialConversions: conv,
+      convRate: trials > 0 ? (conv / trials) * 100 : 0,
+      avgRevenue: newSub > 0 ? rev / newSub : 0,
+      churnRate: (totalActive + canc) > 0 ? (canc / (totalActive + canc)) * 100 : 0,
+    };
+  }, [totalActive, totalMrr, prevMonth]);
+
+  const dailyTrends = useMemo(() => {
+    const from = filters.dateFrom;
+    const to = filters.dateTo;
+    if (!from || !to) return dailyArr;
+    return dailyArr.filter((d) => dayInRange(d.day, from, to));
+  }, [dailyArr, filters.dateFrom, filters.dateTo]);
+
+  const compareDailyTrends = [];
 
   const plansData = useMemo(() => {
-    const arr = getData('by_plan') || [];
+    const arr = Array.isArray(cache.by_plan?.data) ? cache.by_plan.data : [];
     const totalActiveSum = arr.reduce((s, x) => s + num(x.active), 0);
     return arr.map((r) => {
       const active = num(r.active);
       const canceled = num(r.canceled);
       const revenue = num(r.revenue);
+      const avgPrice = num(r.avg_price) || (active > 0 ? revenue / active : 0);
       const churn = (active + canceled) > 0 ? (canceled / (active + canceled)) * 100 : 0;
       const pct = totalActiveSum > 0 ? (active / totalActiveSum) * 100 : 0;
-      const avgPrice = active > 0 ? revenue / active : 0;
       return {
         planName: r.plan || 'Unknown',
         subscribers: active,
@@ -114,17 +208,15 @@ export function useSubscriptionsData() {
   }, [cache]);
 
   const countriesData = useMemo(() => {
-    const arr = getData('by_country') || [];
+    const arr = Array.isArray(cache.by_country?.data) ? cache.by_country.data : [];
     const totalActiveSum = arr.reduce((s, x) => s + num(x.active), 0);
     return arr.map((r) => {
       const active = num(r.active);
       const canceled = num(r.canceled);
-      const trials = num(r.trials);
       const revenue = num(r.revenue);
+      const avgPrice = num(r.avg_price) || (active > 0 ? revenue / active : 0);
       const churn = (active + canceled) > 0 ? (canceled / (active + canceled)) * 100 : 0;
       const pct = totalActiveSum > 0 ? (active / totalActiveSum) * 100 : 0;
-      const avgPrice = active > 0 ? revenue / active : 0;
-      const avgLtv = active > 0 ? revenue / active : 0;
       return {
         country: r.country || 'Unknown',
         active,
@@ -132,7 +224,7 @@ export function useSubscriptionsData() {
         cancelled: canceled,
         net: active - canceled,
         avgPrice,
-        avgLifetimeValue: avgLtv,
+        avgLifetimeValue: avgPrice,
         churnRate: churn,
         pctOfTotal: pct,
         _filterKey: r.country || 'Unknown',
@@ -141,7 +233,7 @@ export function useSubscriptionsData() {
   }, [cache]);
 
   const platformsData = useMemo(() => {
-    const arr = getData('by_platform') || [];
+    const arr = Array.isArray(cache.by_platform?.data) ? cache.by_platform.data : [];
     const totalActiveSum = arr.reduce((s, x) => s + num(x.active), 0);
     return arr.map((r) => {
       const total = num(r.total);
@@ -162,7 +254,7 @@ export function useSubscriptionsData() {
   }, [cache]);
 
   const churnReasonsData = useMemo(() => {
-    const arr = getData('by_churn_reason') || [];
+    const arr = Array.isArray(cache.by_churn_reason?.data) ? cache.by_churn_reason.data : [];
     const totalSum = arr.reduce((s, x) => s + num(x.total), 0);
     return arr.map((r) => {
       const count = num(r.total);
@@ -178,38 +270,23 @@ export function useSubscriptionsData() {
     }).sort((a, b) => b.count - a.count);
   }, [cache]);
 
-  const frequencyData = [];
-  const trialsData = [];
-  const acquisitionData = [];
-  const healthData = [];
-
-  const dailyTrends = [];
-  const compareDailyTrends = [];
-
   const revenueMonthlyTrend = useMemo(() => {
-    const mrr = totalMrr;
-    const now = new Date();
-    const arr = [];
-    for (let i = 11; i >= 0; i--) {
-      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      arr.push({ month: `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`, mrr: i === 0 ? mrr : mrr * (0.95 + Math.random() * 0.1) });
-    }
-    return arr;
-  }, [totalMrr]);
+    return monthlyArr.map((m) => ({ month: m.month, mrr: num(m.revenue) }));
+  }, [monthlyArr]);
 
   const revenueByCountry = useMemo(() => {
-    const arr = getData('by_country') || [];
+    const arr = Array.isArray(cache.by_country?.data) ? cache.by_country.data : [];
     return arr.slice(0, 15).map((r) => ({ name: r.country || 'Unknown', value: num(r.revenue) }));
   }, [cache]);
 
   const revenueByPlan = useMemo(() => {
-    const arr = getData('by_plan') || [];
+    const arr = Array.isArray(cache.by_plan?.data) ? cache.by_plan.data : [];
     return arr.map((r) => ({ name: r.plan || 'Unknown', value: num(r.revenue) }));
   }, [cache]);
 
   const revenueByFreq = { monthly: totalMrr * 0.6, yearly: totalMrr * 0.4 };
   const revenueByPlatform = useMemo(() => {
-    const arr = getData('by_platform') || [];
+    const arr = Array.isArray(cache.by_platform?.data) ? cache.by_platform.data : [];
     return arr.map((r) => ({ name: r.platform || 'unknown', value: num(r.active) * (totalMrr / Math.max(totalActive, 1)) }));
   }, [cache, totalMrr, totalActive]);
 
@@ -281,10 +358,11 @@ export function useSubscriptionsData() {
     loading, error, emailListLoading,
     kpis, compareKpis,
     dailyTrends, compareDailyTrends,
-    plansData, countriesData, platformsData, frequencyData,
-    trialsData, churnReasonsData, acquisitionData, healthData,
+    plansData, countriesData, platformsData,
+    churnReasonsData,
     revenueMonthlyTrend, revenueByCountry, revenueByPlan, revenueByFreq, revenueByPlatform,
     totalLtv,
     fetchEmailList,
+    lastUpdated,
   };
 }
