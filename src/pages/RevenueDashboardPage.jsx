@@ -22,8 +22,7 @@ export function RevenueDashboardPage() {
 
   const handleDatePickerApply = useCallback(({ preset, dateFrom, dateTo, compareOn, compareFrom, compareTo }) => {
     batchUpdateFilters({ datePreset: preset, dateFrom: dateFrom || '', dateTo: dateTo || '', compareOn, compareFrom: compareFrom || '', compareTo: compareTo || '' });
-    setTimeout(() => fetchData(), 30);
-  }, [batchUpdateFilters, fetchData]);
+  }, [batchUpdateFilters]);
 
   useEffect(() => {
     if (!revenueMonthlyTrend?.length || loading) return;
