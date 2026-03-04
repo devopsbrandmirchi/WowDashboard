@@ -112,7 +112,7 @@ export function useSubscriptionsData() {
   const totalActive = num(allTime.total_active);
   const totalMrr = num(allTime.total_mrr);
   const totalLtv = num(allTime.total_ltv);
-  const totalCanceled = num(allTime.total_canceled);
+  const totalCancelled = num(allTime.total_cancelled);
 
   const selectedMonthKey = useMemo(() => {
     const to = filters.dateTo || filters.dateFrom;
@@ -134,6 +134,8 @@ export function useSubscriptionsData() {
   const kpis = useMemo(() => {
     const newSub = num(selectedMonth?.new_subscribers);
     const canc = num(selectedMonth?.cancellations);
+    const expir = num(selectedMonth?.expirations);
+    const cancPlusExp = canc + expir;
     const trials = num(selectedMonth?.trials_started);
     const conv = num(selectedMonth?.trial_conversions);
     const rev = num(selectedMonth?.revenue);
@@ -141,14 +143,14 @@ export function useSubscriptionsData() {
       totalActive,
       totalLtv,
       newSubscribers: newSub,
-      cancellations: canc,
-      netGrowth: newSub - canc,
+      cancellations: cancPlusExp,
+      netGrowth: newSub - cancPlusExp,
       mrr: totalMrr,
       trialsStarted: trials,
       trialConversions: conv,
       convRate: trials > 0 ? (conv / trials) * 100 : 0,
       avgRevenue: newSub > 0 ? rev / newSub : 0,
-      churnRate: (totalActive + canc) > 0 ? (canc / (totalActive + canc)) * 100 : 0,
+      churnRate: (totalActive + cancPlusExp) > 0 ? (cancPlusExp / (totalActive + cancPlusExp)) * 100 : 0,
     };
   }, [totalActive, totalMrr, totalLtv, selectedMonth]);
 
@@ -156,20 +158,22 @@ export function useSubscriptionsData() {
     if (!prevMonth) return null;
     const newSub = num(prevMonth.new_subscribers);
     const canc = num(prevMonth.cancellations);
+    const expir = num(prevMonth.expirations);
+    const cancPlusExp = canc + expir;
     const trials = num(prevMonth.trials_started);
     const conv = num(prevMonth.trial_conversions);
     const rev = num(prevMonth.revenue);
     return {
       totalActive,
       newSubscribers: newSub,
-      cancellations: canc,
-      netGrowth: newSub - canc,
+      cancellations: cancPlusExp,
+      netGrowth: newSub - cancPlusExp,
       mrr: totalMrr,
       trialsStarted: trials,
       trialConversions: conv,
       convRate: trials > 0 ? (conv / trials) * 100 : 0,
       avgRevenue: newSub > 0 ? rev / newSub : 0,
-      churnRate: (totalActive + canc) > 0 ? (canc / (totalActive + canc)) * 100 : 0,
+      churnRate: (totalActive + cancPlusExp) > 0 ? (cancPlusExp / (totalActive + cancPlusExp)) * 100 : 0,
     };
   }, [totalActive, totalMrr, prevMonth]);
 
@@ -186,46 +190,51 @@ export function useSubscriptionsData() {
     const arr = Array.isArray(cache.by_plan?.data) ? cache.by_plan.data : [];
     const totalActiveSum = arr.reduce((s, x) => s + num(x.active), 0);
     return arr.map((r) => {
+      const total = num(r.total);
       const active = num(r.active);
-      const canceled = num(r.canceled);
+      const cancelled = num(r.cancelled);
+      const expired = num(r.expired);
       const revenue = num(r.revenue);
       const avgPrice = num(r.avg_price) || (active > 0 ? revenue / active : 0);
-      const churn = (active + canceled) > 0 ? (canceled / (active + canceled)) * 100 : 0;
       const pct = totalActiveSum > 0 ? (active / totalActiveSum) * 100 : 0;
       return {
         planName: r.plan || 'Unknown',
-        subscribers: active,
-        new: 0,
-        cancelled: canceled,
-        net: active - canceled,
+        plan: r.plan || 'Unknown',
+        total,
+        active,
+        cancelled,
+        expired,
+        revenue,
         avgPrice,
-        totalRevenue: revenue,
-        churnRate: churn,
         pctOfTotal: pct,
         _filterKey: r.plan || 'Unknown',
       };
-    }).sort((a, b) => b.subscribers - a.subscribers);
+    }).sort((a, b) => b.active - a.active);
   }, [cache]);
 
   const countriesData = useMemo(() => {
     const arr = Array.isArray(cache.by_country?.data) ? cache.by_country.data : [];
     const totalActiveSum = arr.reduce((s, x) => s + num(x.active), 0);
     return arr.map((r) => {
+      const total = num(r.total);
       const active = num(r.active);
-      const canceled = num(r.canceled);
+      const cancelled = num(r.cancelled);
+      const expired = num(r.expired);
+      const trials = num(r.trials);
+      const converted = num(r.converted);
       const revenue = num(r.revenue);
       const avgPrice = num(r.avg_price) || (active > 0 ? revenue / active : 0);
-      const churn = (active + canceled) > 0 ? (canceled / (active + canceled)) * 100 : 0;
       const pct = totalActiveSum > 0 ? (active / totalActiveSum) * 100 : 0;
       return {
         country: r.country || 'Unknown',
+        total,
         active,
-        new: 0,
-        cancelled: canceled,
-        net: active - canceled,
+        cancelled,
+        expired,
+        trials,
+        converted,
+        revenue,
         avgPrice,
-        avgLifetimeValue: avgPrice,
-        churnRate: churn,
         pctOfTotal: pct,
         _filterKey: r.country || 'Unknown',
       };
@@ -238,19 +247,53 @@ export function useSubscriptionsData() {
     return arr.map((r) => {
       const total = num(r.total);
       const active = num(r.active);
+      const cancelled = num(r.cancelled);
       const pct = totalActiveSum > 0 ? (active / totalActiveSum) * 100 : 0;
       return {
         platform: r.platform || 'unknown',
+        total,
         active,
-        new: 0,
-        cancelled: 0,
-        monthly: 0,
-        yearly: 0,
-        avgPrice: 0,
+        cancelled,
         pctOfTotal: pct,
         _filterKey: r.platform || 'unknown',
       };
     }).sort((a, b) => b.active - a.active);
+  }, [cache]);
+
+  const frequencyData = useMemo(() => {
+    const arr = Array.isArray(cache.by_frequency?.data) ? cache.by_frequency.data : [];
+    const totalActiveSum = arr.reduce((s, x) => s + num(x.active), 0);
+    return arr.map((r) => {
+      const total = num(r.total);
+      const active = num(r.active);
+      const avgPrice = num(r.avg_price);
+      const revenue = num(r.revenue);
+      const pct = totalActiveSum > 0 ? (active / totalActiveSum) * 100 : 0;
+      return {
+        frequency: r.frequency || 'Unknown',
+        total,
+        active,
+        avgPrice,
+        revenue,
+        pctOfTotal: pct,
+        _filterKey: r.frequency || 'Unknown',
+      };
+    }).sort((a, b) => b.active - a.active);
+  }, [cache]);
+
+  const statusData = useMemo(() => {
+    const arr = Array.isArray(cache.by_status?.data) ? cache.by_status.data : [];
+    const totalSum = arr.reduce((s, x) => s + num(x.total), 0);
+    return arr.map((r) => {
+      const total = num(r.total);
+      const pct = totalSum > 0 ? (total / totalSum) * 100 : 0;
+      return {
+        status: r.status || 'Unknown',
+        total,
+        pctOfTotal: pct,
+        _filterKey: r.status || 'Unknown',
+      };
+    }).sort((a, b) => b.total - a.total);
   }, [cache]);
 
   const churnReasonsData = useMemo(() => {
@@ -338,6 +381,12 @@ export function useSubscriptionsData() {
         case 'by_churn_reason':
           if (filterKey) q = q.eq('cancel_reason_category', filterKey);
           break;
+        case 'by_frequency':
+          if (filterKey) q = q.eq('frequency', filterKey);
+          break;
+        case 'by_status':
+          if (filterKey) q = q.eq('status', filterKey);
+          break;
         default:
           q = q.eq('status', 'enabled');
       }
@@ -358,7 +407,7 @@ export function useSubscriptionsData() {
     loading, error, emailListLoading,
     kpis, compareKpis,
     dailyTrends, compareDailyTrends,
-    plansData, countriesData, platformsData,
+    plansData, countriesData, platformsData, frequencyData, statusData,
     churnReasonsData,
     revenueMonthlyTrend, revenueByCountry, revenueByPlan, revenueByFreq, revenueByPlatform,
     totalLtv,
