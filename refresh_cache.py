@@ -1,4 +1,4 @@
-import os, sys, requests, time
+import os, sys, json, time
 from datetime import datetime, timedelta
 from collections import defaultdict
 
@@ -14,235 +14,296 @@ if os.path.exists(env_path):
                 k, v = line.split("=", 1)
                 os.environ[k.strip()] = v.strip()
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("ERROR: Missing SUPABASE_URL or SUPABASE_KEY")
+if not DATABASE_URL:
+    print("ERROR: Missing DATABASE_URL")
     sys.exit(1)
 
 print(f"Starting cache refresh at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print(f"Supabase URL: {SUPABASE_URL[:30]}...")
 
-HEADERS = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json",
-    "Prefer": "resolution=merge-duplicates"
-}
+try:
+    import psycopg2
+    import psycopg2.extras
+except ImportError:
+    print("Installing psycopg2-binary...")
+    os.system(f"{sys.executable} -m pip install psycopg2-binary")
+    import psycopg2
+    import psycopg2.extras
 
-READ_HEADERS = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json"
-}
+conn = psycopg2.connect(DATABASE_URL)
+conn.autocommit = True
+cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
+# Set long timeout for this session
+cur.execute("SET statement_timeout = '600s';")
 
-def upsert_cache(metric_name, metric_data):
-    url = f"{SUPABASE_URL}/rest/v1/subscription_kpi_cache"
-    row = {"metric_name": metric_name, "metric_data": metric_data}
-    for attempt in range(3):
-        try:
-            resp = requests.post(url, headers=HEADERS, json=[row], timeout=300)
-            if resp.status_code in (200, 201):
-                print(f"  SAVED: {metric_name}")
-                return True
-            else:
-                print(f"  ERROR saving {metric_name}: {resp.status_code} {resp.text[:200]}")
-        except Exception as e:
-            print(f"  RETRY {attempt + 1}: {e}")
-            time.sleep(3)
-    return False
+print("Connected to database directly!")
 
+# Count total records
+cur.execute("SELECT COUNT(*) as total FROM vimeo_subscriptions;")
+total = cur.fetchone()["total"]
+print(f"Total records in table: {total}")
 
-def fetch_all_rows(fields):
-    """Fetch all rows using offset pagination with order by record_id"""
-    url = f"{SUPABASE_URL}/rest/v1/vimeo_subscriptions"
-    all_rows = []
-    offset = 0
-    batch = 1000
-
-    print(f"  Fetching in batches of {batch}...")
-    while True:
-        try:
-            resp = requests.get(url, headers=READ_HEADERS, params={
-                "select": fields,
-                "offset": offset,
-                "limit": batch,
-                "order": "record_id"
-            }, timeout=120)
-
-            if resp.status_code != 200:
-                print(f"  Fetch error at offset {offset}: {resp.status_code} {resp.text[:100]}")
-                break
-
-            rows = resp.json()
-            if not rows:
-                break
-
-            all_rows.extend(rows)
-            offset += len(rows)
-
-            if len(all_rows) % 10000 == 0 or len(rows) < batch:
-                print(f"  Fetched: {len(all_rows)} rows...")
-
-            if len(rows) < batch:
-                break
-
-        except Exception as e:
-            print(f"  Error at offset {offset}: {e}, retrying in 5s...")
-            time.sleep(5)
-            continue
-
-    print(f"  DONE: {len(all_rows)} total rows")
-    return all_rows
-
-
-print("=" * 60)
-print("STEP 1: Fetching all records from Supabase...")
+print("\n" + "=" * 60)
+print("STEP 1: All-time KPIs (single query)...")
 print("=" * 60)
 
-fields = "status,frequency,subscription_price,lifetime_value,trial_started_date,converted_trial,country,current_plan,platform,cancel_reason_category,date_became_enabled,date_last_canceled,record_id"
-rows = fetch_all_rows(fields)
+cur.execute("""
+    SELECT 
+        COUNT(*) FILTER(WHERE status='enabled') AS total_active,
+        COUNT(*) AS total_records,
+        COUNT(*) FILTER(WHERE status='canceled') AS total_canceled,
+        COUNT(*) FILTER(WHERE trial_started_date IS NOT NULL) AS total_trials,
+        COUNT(*) FILTER(WHERE converted_trial IS NOT NULL AND converted_trial!='') AS total_converted,
+        COALESCE(SUM(CASE 
+            WHEN status='enabled' AND frequency='monthly' THEN subscription_price 
+            WHEN status='enabled' AND frequency='yearly' THEN subscription_price/12 
+            ELSE 0 END), 0) AS total_mrr,
+        COALESCE(SUM(lifetime_value), 0) AS total_ltv
+    FROM vimeo_subscriptions;
+""")
+row = cur.fetchone()
+all_time = {k: float(v) if v else 0 for k, v in row.items()}
+print(f"  Active: {int(all_time['total_active'])} | Records: {int(all_time['total_records'])} | MRR: {all_time['total_mrr']:.2f}")
 
-if not rows:
-    print("ERROR: No rows fetched! Check Supabase connection.")
-    sys.exit(1)
+cur.execute("""
+    INSERT INTO subscription_kpi_cache (metric_name, metric_data) 
+    VALUES ('all_time', %s::jsonb)
+    ON CONFLICT (metric_name) DO UPDATE SET metric_data=EXCLUDED.metric_data, updated_at=NOW();
+""", [json.dumps(all_time)])
+print("  SAVED: all_time")
 
-print(f"\n{'=' * 60}")
-print(f"STEP 2: Processing {len(rows)} records...")
+print("\n" + "=" * 60)
+print("STEP 2: Country breakdown...")
 print("=" * 60)
 
-# 1. ALL TIME KPIs
-print("\n  Processing all-time KPIs...")
-total_active = sum(1 for r in rows if r.get("status") == "enabled")
-all_time = {
-    "total_active": total_active,
-    "total_records": len(rows),
-    "total_canceled": sum(1 for r in rows if r.get("status") == "canceled"),
-    "total_trials": sum(1 for r in rows if r.get("trial_started_date")),
-    "total_converted": sum(1 for r in rows if r.get("converted_trial") and str(r["converted_trial"]).strip()),
-    "total_mrr": round(sum(
-        float(r.get("subscription_price") or 0) if r.get("frequency") == "monthly"
-        else float(r.get("subscription_price") or 0) / 12 if r.get("frequency") == "yearly"
-        else 0 for r in rows if r.get("status") == "enabled"
-    ), 2),
-    "total_ltv": round(sum(float(r.get("lifetime_value") or 0) for r in rows), 2)
-}
-print(f"  Active: {all_time['total_active']} | Records: {all_time['total_records']} | MRR: {all_time['total_mrr']}")
-upsert_cache("all_time", all_time)
-
-# 2. COUNTRY BREAKDOWN
-print("\n  Processing countries...")
-countries = {}
-for r in rows:
-    c = r.get("country") or "Unknown"
-    if c not in countries:
-        countries[c] = {"country": c, "active": 0, "canceled": 0, "trials": 0, "revenue": 0, "prices": []}
-    if r.get("status") == "enabled": countries[c]["active"] += 1
-    if r.get("status") == "canceled": countries[c]["canceled"] += 1
-    if r.get("trial_started_date"): countries[c]["trials"] += 1
-    countries[c]["revenue"] += float(r.get("lifetime_value") or 0)
-    if r.get("subscription_price"): countries[c]["prices"].append(float(r["subscription_price"]))
-country_list = []
-for c in countries.values():
-    avg_p = round(sum(c["prices"]) / len(c["prices"]), 2) if c["prices"] else 0
-    country_list.append({"country": c["country"], "active": c["active"], "canceled": c["canceled"], "trials": c["trials"], "revenue": round(c["revenue"], 2), "avg_price": avg_p})
-country_list.sort(key=lambda x: x["active"], reverse=True)
+cur.execute("""
+    SELECT 
+        COALESCE(country,'Unknown') AS country,
+        COUNT(*) FILTER(WHERE status='enabled') AS active,
+        COUNT(*) FILTER(WHERE status='canceled') AS canceled,
+        COUNT(*) FILTER(WHERE trial_started_date IS NOT NULL) AS trials,
+        COALESCE(SUM(lifetime_value),0) AS revenue,
+        COALESCE(AVG(subscription_price),0) AS avg_price
+    FROM vimeo_subscriptions 
+    GROUP BY COALESCE(country,'Unknown') 
+    ORDER BY active DESC LIMIT 50;
+""")
+country_list = [dict(r) for r in cur.fetchall()]
+for c in country_list:
+    c["revenue"] = float(c["revenue"])
+    c["avg_price"] = float(c["avg_price"])
+    c["active"] = int(c["active"])
+    c["canceled"] = int(c["canceled"])
+    c["trials"] = int(c["trials"])
 print(f"  Countries: {len(country_list)} | Top: {country_list[0]['country'] if country_list else 'none'}")
-upsert_cache("by_country", country_list[:50])
 
-# 3. PLAN BREAKDOWN
-print("\n  Processing plans...")
-plans = {}
-for r in rows:
-    p = r.get("current_plan") or "Unknown"
-    if p not in plans:
-        plans[p] = {"plan": p, "active": 0, "canceled": 0, "revenue": 0, "prices": []}
-    if r.get("status") == "enabled": plans[p]["active"] += 1
-    if r.get("status") == "canceled": plans[p]["canceled"] += 1
-    plans[p]["revenue"] += float(r.get("lifetime_value") or 0)
-    if r.get("subscription_price"): plans[p]["prices"].append(float(r["subscription_price"]))
-plan_list = []
-for p in plans.values():
-    avg_p = round(sum(p["prices"]) / len(p["prices"]), 2) if p["prices"] else 0
-    plan_list.append({"plan": p["plan"], "active": p["active"], "canceled": p["canceled"], "revenue": round(p["revenue"], 2), "avg_price": avg_p})
-plan_list.sort(key=lambda x: x["active"], reverse=True)
+cur.execute("""
+    INSERT INTO subscription_kpi_cache (metric_name, metric_data) 
+    VALUES ('by_country', %s::jsonb)
+    ON CONFLICT (metric_name) DO UPDATE SET metric_data=EXCLUDED.metric_data, updated_at=NOW();
+""", [json.dumps(country_list)])
+print("  SAVED: by_country")
+
+print("\n" + "=" * 60)
+print("STEP 3: Plan breakdown...")
+print("=" * 60)
+
+cur.execute("""
+    SELECT 
+        COALESCE(current_plan,'Unknown') AS plan,
+        COUNT(*) FILTER(WHERE status='enabled') AS active,
+        COUNT(*) FILTER(WHERE status='canceled') AS canceled,
+        COALESCE(SUM(lifetime_value),0) AS revenue,
+        COALESCE(AVG(subscription_price),0) AS avg_price
+    FROM vimeo_subscriptions 
+    GROUP BY COALESCE(current_plan,'Unknown') 
+    ORDER BY active DESC;
+""")
+plan_list = [dict(r) for r in cur.fetchall()]
+for p in plan_list:
+    p["revenue"] = float(p["revenue"])
+    p["avg_price"] = float(p["avg_price"])
+    p["active"] = int(p["active"])
+    p["canceled"] = int(p["canceled"])
 print(f"  Plans: {len(plan_list)}")
-upsert_cache("by_plan", plan_list)
 
-# 4. PLATFORM BREAKDOWN
-print("\n  Processing platforms...")
-platforms = {}
-for r in rows:
-    p = r.get("platform") or "Unknown"
-    if p not in platforms: platforms[p] = {"platform": p, "total": 0, "active": 0}
-    platforms[p]["total"] += 1
-    if r.get("status") == "enabled": platforms[p]["active"] += 1
-platform_list = sorted(platforms.values(), key=lambda x: x["total"], reverse=True)
+cur.execute("""
+    INSERT INTO subscription_kpi_cache (metric_name, metric_data) 
+    VALUES ('by_plan', %s::jsonb)
+    ON CONFLICT (metric_name) DO UPDATE SET metric_data=EXCLUDED.metric_data, updated_at=NOW();
+""", [json.dumps(plan_list)])
+print("  SAVED: by_plan")
+
+print("\n" + "=" * 60)
+print("STEP 4: Platform breakdown...")
+print("=" * 60)
+
+cur.execute("""
+    SELECT 
+        COALESCE(platform,'Unknown') AS platform,
+        COUNT(*) AS total,
+        COUNT(*) FILTER(WHERE status='enabled') AS active
+    FROM vimeo_subscriptions 
+    GROUP BY COALESCE(platform,'Unknown') 
+    ORDER BY total DESC;
+""")
+platform_list = [dict(r) for r in cur.fetchall()]
+for p in platform_list:
+    p["total"] = int(p["total"])
+    p["active"] = int(p["active"])
 print(f"  Platforms: {len(platform_list)}")
-upsert_cache("by_platform", platform_list)
 
-# 5. CHURN REASONS
-print("\n  Processing churn reasons...")
-reasons = {}
-for r in rows:
-    if r.get("status") == "canceled":
-        reason = r.get("cancel_reason_category") or "Unknown"
-        reasons[reason] = reasons.get(reason, 0) + 1
-reason_list = sorted([{"reason": k, "total": v} for k, v in reasons.items()], key=lambda x: x["total"], reverse=True)[:20]
+cur.execute("""
+    INSERT INTO subscription_kpi_cache (metric_name, metric_data) 
+    VALUES ('by_platform', %s::jsonb)
+    ON CONFLICT (metric_name) DO UPDATE SET metric_data=EXCLUDED.metric_data, updated_at=NOW();
+""", [json.dumps(platform_list)])
+print("  SAVED: by_platform")
+
+print("\n" + "=" * 60)
+print("STEP 5: Churn reasons...")
+print("=" * 60)
+
+cur.execute("""
+    SELECT 
+        COALESCE(cancel_reason_category,'Unknown') AS reason,
+        COUNT(*) AS total
+    FROM vimeo_subscriptions 
+    WHERE status='canceled' 
+    GROUP BY COALESCE(cancel_reason_category,'Unknown') 
+    ORDER BY total DESC LIMIT 20;
+""")
+reason_list = [dict(r) for r in cur.fetchall()]
+for r in reason_list:
+    r["total"] = int(r["total"])
 print(f"  Churn reasons: {len(reason_list)}")
-upsert_cache("by_churn_reason", reason_list)
 
-# 6. MONTHLY BREAKDOWN
-print("\n  Processing monthly breakdown...")
-cutoff_m = (datetime.now() - timedelta(days=365)).strftime("%Y-%m")
-monthly = defaultdict(lambda: {"new_subscribers": 0, "cancellations": 0, "trials_started": 0, "trial_conversions": 0, "revenue": 0})
-for r in rows:
-    if r.get("date_became_enabled"):
-        m = str(r["date_became_enabled"])[:7]
-        if m >= cutoff_m:
-            monthly[m]["new_subscribers"] += 1
-            monthly[m]["revenue"] += float(r.get("subscription_price") or 0)
-            if r.get("converted_trial") and str(r["converted_trial"]).strip():
-                monthly[m]["trial_conversions"] += 1
-    if r.get("date_last_canceled"):
-        m = str(r["date_last_canceled"])[:7]
-        if m >= cutoff_m:
-            monthly[m]["cancellations"] += 1
-    if r.get("trial_started_date"):
-        m = str(r["trial_started_date"])[:7]
-        if m >= cutoff_m:
-            monthly[m]["trials_started"] += 1
-monthly_list = [{"month": k, **v} for k, v in sorted(monthly.items())]
+cur.execute("""
+    INSERT INTO subscription_kpi_cache (metric_name, metric_data) 
+    VALUES ('by_churn_reason', %s::jsonb)
+    ON CONFLICT (metric_name) DO UPDATE SET metric_data=EXCLUDED.metric_data, updated_at=NOW();
+""", [json.dumps(reason_list)])
+print("  SAVED: by_churn_reason")
+
+print("\n" + "=" * 60)
+print("STEP 6: Monthly breakdown (last 12 months)...")
+print("=" * 60)
+
+cur.execute("""
+    SELECT 
+        to_char(m.month, 'YYYY-MM') AS month,
+        COALESCE(ns.c, 0) AS new_subscribers,
+        COALESCE(ca.c, 0) AS cancellations,
+        COALESCE(ts.c, 0) AS trials_started,
+        COALESCE(tc.c, 0) AS trial_conversions,
+        COALESCE(rv.s, 0) AS revenue
+    FROM generate_series(
+        date_trunc('month', NOW() - INTERVAL '11 months'),
+        date_trunc('month', NOW()),
+        '1 month'
+    ) AS m(month)
+    LEFT JOIN (
+        SELECT date_trunc('month', date_became_enabled) AS dt, COUNT(*) AS c 
+        FROM vimeo_subscriptions WHERE date_became_enabled >= NOW() - INTERVAL '12 months' GROUP BY dt
+    ) ns ON ns.dt = m.month
+    LEFT JOIN (
+        SELECT date_trunc('month', date_last_canceled) AS dt, COUNT(*) AS c 
+        FROM vimeo_subscriptions WHERE date_last_canceled >= NOW() - INTERVAL '12 months' GROUP BY dt
+    ) ca ON ca.dt = m.month
+    LEFT JOIN (
+        SELECT date_trunc('month', trial_started_date) AS dt, COUNT(*) AS c 
+        FROM vimeo_subscriptions WHERE trial_started_date >= NOW() - INTERVAL '12 months' GROUP BY dt
+    ) ts ON ts.dt = m.month
+    LEFT JOIN (
+        SELECT date_trunc('month', date_became_enabled) AS dt, COUNT(*) AS c 
+        FROM vimeo_subscriptions WHERE converted_trial IS NOT NULL AND converted_trial != '' 
+        AND date_became_enabled >= NOW() - INTERVAL '12 months' GROUP BY dt
+    ) tc ON tc.dt = m.month
+    LEFT JOIN (
+        SELECT date_trunc('month', date_became_enabled) AS dt, COALESCE(SUM(subscription_price), 0) AS s 
+        FROM vimeo_subscriptions WHERE date_became_enabled >= NOW() - INTERVAL '12 months' GROUP BY dt
+    ) rv ON rv.dt = m.month
+    ORDER BY m.month;
+""")
+monthly_list = [dict(r) for r in cur.fetchall()]
+for m in monthly_list:
+    m["new_subscribers"] = int(m["new_subscribers"])
+    m["cancellations"] = int(m["cancellations"])
+    m["trials_started"] = int(m["trials_started"])
+    m["trial_conversions"] = int(m["trial_conversions"])
+    m["revenue"] = float(m["revenue"])
 print(f"  Months: {len(monthly_list)}")
-upsert_cache("monthly", monthly_list)
 
-# 7. DAILY BREAKDOWN
-print("\n  Processing daily breakdown...")
-cutoff_d = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
-daily = defaultdict(lambda: {"new_subscribers": 0, "cancellations": 0, "trials_started": 0, "trial_conversions": 0, "revenue": 0})
-for r in rows:
-    if r.get("date_became_enabled"):
-        d = str(r["date_became_enabled"])[:10]
-        if d >= cutoff_d:
-            daily[d]["new_subscribers"] += 1
-            daily[d]["revenue"] += float(r.get("subscription_price") or 0)
-            if r.get("converted_trial") and str(r["converted_trial"]).strip():
-                daily[d]["trial_conversions"] += 1
-    if r.get("date_last_canceled"):
-        d = str(r["date_last_canceled"])[:10]
-        if d >= cutoff_d:
-            daily[d]["cancellations"] += 1
-    if r.get("trial_started_date"):
-        d = str(r["trial_started_date"])[:10]
-        if d >= cutoff_d:
-            daily[d]["trials_started"] += 1
-daily_list = [{"day": k, **v} for k, v in sorted(daily.items())]
+cur.execute("""
+    INSERT INTO subscription_kpi_cache (metric_name, metric_data) 
+    VALUES ('monthly', %s::jsonb)
+    ON CONFLICT (metric_name) DO UPDATE SET metric_data=EXCLUDED.metric_data, updated_at=NOW();
+""", [json.dumps(monthly_list)])
+print("  SAVED: monthly")
+
+print("\n" + "=" * 60)
+print("STEP 7: Daily breakdown (last 90 days)...")
+print("=" * 60)
+
+cur.execute("""
+    SELECT 
+        d.day::text AS day,
+        COALESCE(ns.c, 0) AS new_subscribers,
+        COALESCE(ca.c, 0) AS cancellations,
+        COALESCE(ts.c, 0) AS trials_started,
+        COALESCE(tc.c, 0) AS trial_conversions,
+        COALESCE(rv.s, 0) AS revenue
+    FROM generate_series(
+        (NOW() - INTERVAL '90 days')::date,
+        CURRENT_DATE,
+        '1 day'
+    ) AS d(day)
+    LEFT JOIN (
+        SELECT date_became_enabled::date AS dt, COUNT(*) AS c 
+        FROM vimeo_subscriptions WHERE date_became_enabled >= NOW() - INTERVAL '90 days' GROUP BY dt
+    ) ns ON ns.dt = d.day
+    LEFT JOIN (
+        SELECT date_last_canceled::date AS dt, COUNT(*) AS c 
+        FROM vimeo_subscriptions WHERE date_last_canceled >= NOW() - INTERVAL '90 days' GROUP BY dt
+    ) ca ON ca.dt = d.day
+    LEFT JOIN (
+        SELECT trial_started_date::date AS dt, COUNT(*) AS c 
+        FROM vimeo_subscriptions WHERE trial_started_date >= NOW() - INTERVAL '90 days' GROUP BY dt
+    ) ts ON ts.dt = d.day
+    LEFT JOIN (
+        SELECT date_became_enabled::date AS dt, COUNT(*) AS c 
+        FROM vimeo_subscriptions WHERE converted_trial IS NOT NULL AND converted_trial != '' 
+        AND date_became_enabled >= NOW() - INTERVAL '90 days' GROUP BY dt
+    ) tc ON tc.dt = d.day
+    LEFT JOIN (
+        SELECT date_became_enabled::date AS dt, COALESCE(SUM(subscription_price), 0) AS s 
+        FROM vimeo_subscriptions WHERE date_became_enabled >= NOW() - INTERVAL '90 days' GROUP BY dt
+    ) rv ON rv.dt = d.day
+    ORDER BY d.day;
+""")
+daily_list = [dict(r) for r in cur.fetchall()]
+for d in daily_list:
+    d["new_subscribers"] = int(d["new_subscribers"])
+    d["cancellations"] = int(d["cancellations"])
+    d["trials_started"] = int(d["trials_started"])
+    d["trial_conversions"] = int(d["trial_conversions"])
+    d["revenue"] = float(d["revenue"])
 print(f"  Days: {len(daily_list)}")
-upsert_cache("daily", daily_list)
+
+cur.execute("""
+    INSERT INTO subscription_kpi_cache (metric_name, metric_data) 
+    VALUES ('daily', %s::jsonb)
+    ON CONFLICT (metric_name) DO UPDATE SET metric_data=EXCLUDED.metric_data, updated_at=NOW();
+""", [json.dumps(daily_list)])
+print("  SAVED: daily")
+
+cur.close()
+conn.close()
 
 print(f"\n{'=' * 60}")
 print(f"ALL DONE at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print(f"Total records processed: {len(rows)}")
+print(f"Total records in table: {total}")
+print("Completed in direct SQL — no row-by-row fetching needed!")
 print("=" * 60)
