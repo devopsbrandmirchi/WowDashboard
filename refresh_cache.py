@@ -2,7 +2,6 @@ import os, sys, requests, time
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-# Force print to show immediately
 sys.stdout.reconfigure(line_buffering=True)
 
 # Load .env if running locally
@@ -35,9 +34,9 @@ HEADERS = {
 READ_HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json",
-    "Range-Unit": "items"
+    "Content-Type": "application/json"
 }
+
 
 def upsert_cache(metric_name, metric_data):
     url = f"{SUPABASE_URL}/rest/v1/subscription_kpi_cache"
@@ -49,68 +48,61 @@ def upsert_cache(metric_name, metric_data):
                 print(f"  SAVED: {metric_name}")
                 return True
             else:
-                print(f"  ERROR saving {metric_name}: {resp.status_code} {resp.text[:100]}")
+                print(f"  ERROR saving {metric_name}: {resp.status_code} {resp.text[:200]}")
         except Exception as e:
-            print(f"  RETRY {attempt+1}: {e}")
+            print(f"  RETRY {attempt + 1}: {e}")
             time.sleep(3)
     return False
 
+
 def fetch_all_rows(fields):
+    """Fetch all rows using offset pagination with order by record_id"""
     url = f"{SUPABASE_URL}/rest/v1/vimeo_subscriptions"
     all_rows = []
     offset = 0
-    batch = 5000  # Bigger batches = fewer requests
-    
-    # First get total count
-    try:
-        resp = requests.head(url, headers={
-            **READ_HEADERS,
-            "Prefer": "count=exact",
-            "Range": "0-0"
-        }, params={"select": "record_id"}, timeout=30)
-        content_range = resp.headers.get("content-range", "")
-        total = int(content_range.split("/")[1]) if "/" in content_range else "unknown"
-        print(f"  Total records in table: {total}")
-    except:
-        total = "unknown"
-    
+    batch = 1000
+
+    print(f"  Fetching in batches of {batch}...")
     while True:
-        range_header = f"{offset}-{offset + batch - 1}"
         try:
-            resp = requests.get(url, headers={
-                **READ_HEADERS,
-                "Range": range_header
-            }, params={"select": fields}, timeout=120)
-            
-            if resp.status_code not in (200, 206):
-                if resp.status_code == 416:  # Range not satisfiable = no more rows
-                    break
-                print(f"  Fetch error: {resp.status_code} {resp.text[:100]}")
+            resp = requests.get(url, headers=READ_HEADERS, params={
+                "select": fields,
+                "offset": offset,
+                "limit": batch,
+                "order": "record_id"
+            }, timeout=120)
+
+            if resp.status_code != 200:
+                print(f"  Fetch error at offset {offset}: {resp.status_code} {resp.text[:100]}")
                 break
-            
+
             rows = resp.json()
             if not rows:
                 break
+
             all_rows.extend(rows)
-            print(f"  Fetched: {len(all_rows)} / {total}")
-            
+            offset += len(rows)
+
+            if len(all_rows) % 10000 == 0 or len(rows) < batch:
+                print(f"  Fetched: {len(all_rows)} rows...")
+
             if len(rows) < batch:
                 break
-            offset += batch
-            
+
         except Exception as e:
-            print(f"  Fetch exception: {e}")
+            print(f"  Error at offset {offset}: {e}, retrying in 5s...")
             time.sleep(5)
             continue
-    
-    print(f"  DONE fetching: {len(all_rows)} total rows")
+
+    print(f"  DONE: {len(all_rows)} total rows")
     return all_rows
+
 
 print("=" * 60)
 print("STEP 1: Fetching all records from Supabase...")
 print("=" * 60)
 
-fields = "status,frequency,subscription_price,lifetime_value,trial_started_date,converted_trial,country,current_plan,platform,cancel_reason_category,date_became_enabled,date_last_canceled"
+fields = "status,frequency,subscription_price,lifetime_value,trial_started_date,converted_trial,country,current_plan,platform,cancel_reason_category,date_became_enabled,date_last_canceled,record_id"
 rows = fetch_all_rows(fields)
 
 if not rows:
@@ -118,10 +110,10 @@ if not rows:
     sys.exit(1)
 
 print(f"\n{'=' * 60}")
-print("STEP 2: Processing data...")
+print(f"STEP 2: Processing {len(rows)} records...")
 print("=" * 60)
 
-# 1. ALL TIME
+# 1. ALL TIME KPIs
 print("\n  Processing all-time KPIs...")
 total_active = sum(1 for r in rows if r.get("status") == "enabled")
 all_time = {
@@ -140,7 +132,7 @@ all_time = {
 print(f"  Active: {all_time['total_active']} | Records: {all_time['total_records']} | MRR: {all_time['total_mrr']}")
 upsert_cache("all_time", all_time)
 
-# 2. COUNTRY
+# 2. COUNTRY BREAKDOWN
 print("\n  Processing countries...")
 countries = {}
 for r in rows:
@@ -152,12 +144,15 @@ for r in rows:
     if r.get("trial_started_date"): countries[c]["trials"] += 1
     countries[c]["revenue"] += float(r.get("lifetime_value") or 0)
     if r.get("subscription_price"): countries[c]["prices"].append(float(r["subscription_price"]))
-country_list = [{"country": c["country"], "active": c["active"], "canceled": c["canceled"], "trials": c["trials"], "revenue": round(c["revenue"], 2), "avg_price": round(sum(c["prices"])/len(c["prices"]), 2) if c["prices"] else 0} for c in countries.values()]
+country_list = []
+for c in countries.values():
+    avg_p = round(sum(c["prices"]) / len(c["prices"]), 2) if c["prices"] else 0
+    country_list.append({"country": c["country"], "active": c["active"], "canceled": c["canceled"], "trials": c["trials"], "revenue": round(c["revenue"], 2), "avg_price": avg_p})
 country_list.sort(key=lambda x: x["active"], reverse=True)
 print(f"  Countries: {len(country_list)} | Top: {country_list[0]['country'] if country_list else 'none'}")
 upsert_cache("by_country", country_list[:50])
 
-# 3. PLAN
+# 3. PLAN BREAKDOWN
 print("\n  Processing plans...")
 plans = {}
 for r in rows:
@@ -168,12 +163,15 @@ for r in rows:
     if r.get("status") == "canceled": plans[p]["canceled"] += 1
     plans[p]["revenue"] += float(r.get("lifetime_value") or 0)
     if r.get("subscription_price"): plans[p]["prices"].append(float(r["subscription_price"]))
-plan_list = [{"plan": p["plan"], "active": p["active"], "canceled": p["canceled"], "revenue": round(p["revenue"], 2), "avg_price": round(sum(p["prices"])/len(p["prices"]), 2) if p["prices"] else 0} for p in plans.values()]
+plan_list = []
+for p in plans.values():
+    avg_p = round(sum(p["prices"]) / len(p["prices"]), 2) if p["prices"] else 0
+    plan_list.append({"plan": p["plan"], "active": p["active"], "canceled": p["canceled"], "revenue": round(p["revenue"], 2), "avg_price": avg_p})
 plan_list.sort(key=lambda x: x["active"], reverse=True)
 print(f"  Plans: {len(plan_list)}")
 upsert_cache("by_plan", plan_list)
 
-# 4. PLATFORM
+# 4. PLATFORM BREAKDOWN
 print("\n  Processing platforms...")
 platforms = {}
 for r in rows:
@@ -185,7 +183,7 @@ platform_list = sorted(platforms.values(), key=lambda x: x["total"], reverse=Tru
 print(f"  Platforms: {len(platform_list)}")
 upsert_cache("by_platform", platform_list)
 
-# 5. CHURN
+# 5. CHURN REASONS
 print("\n  Processing churn reasons...")
 reasons = {}
 for r in rows:
@@ -196,7 +194,7 @@ reason_list = sorted([{"reason": k, "total": v} for k, v in reasons.items()], ke
 print(f"  Churn reasons: {len(reason_list)}")
 upsert_cache("by_churn_reason", reason_list)
 
-# 6. MONTHLY
+# 6. MONTHLY BREAKDOWN
 print("\n  Processing monthly breakdown...")
 cutoff_m = (datetime.now() - timedelta(days=365)).strftime("%Y-%m")
 monthly = defaultdict(lambda: {"new_subscribers": 0, "cancellations": 0, "trials_started": 0, "trial_conversions": 0, "revenue": 0})
@@ -206,18 +204,21 @@ for r in rows:
         if m >= cutoff_m:
             monthly[m]["new_subscribers"] += 1
             monthly[m]["revenue"] += float(r.get("subscription_price") or 0)
-            if r.get("converted_trial") and str(r["converted_trial"]).strip(): monthly[m]["trial_conversions"] += 1
+            if r.get("converted_trial") and str(r["converted_trial"]).strip():
+                monthly[m]["trial_conversions"] += 1
     if r.get("date_last_canceled"):
         m = str(r["date_last_canceled"])[:7]
-        if m >= cutoff_m: monthly[m]["cancellations"] += 1
+        if m >= cutoff_m:
+            monthly[m]["cancellations"] += 1
     if r.get("trial_started_date"):
         m = str(r["trial_started_date"])[:7]
-        if m >= cutoff_m: monthly[m]["trials_started"] += 1
+        if m >= cutoff_m:
+            monthly[m]["trials_started"] += 1
 monthly_list = [{"month": k, **v} for k, v in sorted(monthly.items())]
 print(f"  Months: {len(monthly_list)}")
 upsert_cache("monthly", monthly_list)
 
-# 7. DAILY
+# 7. DAILY BREAKDOWN
 print("\n  Processing daily breakdown...")
 cutoff_d = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
 daily = defaultdict(lambda: {"new_subscribers": 0, "cancellations": 0, "trials_started": 0, "trial_conversions": 0, "revenue": 0})
@@ -227,17 +228,21 @@ for r in rows:
         if d >= cutoff_d:
             daily[d]["new_subscribers"] += 1
             daily[d]["revenue"] += float(r.get("subscription_price") or 0)
-            if r.get("converted_trial") and str(r["converted_trial"]).strip(): daily[d]["trial_conversions"] += 1
+            if r.get("converted_trial") and str(r["converted_trial"]).strip():
+                daily[d]["trial_conversions"] += 1
     if r.get("date_last_canceled"):
         d = str(r["date_last_canceled"])[:10]
-        if d >= cutoff_d: daily[d]["cancellations"] += 1
+        if d >= cutoff_d:
+            daily[d]["cancellations"] += 1
     if r.get("trial_started_date"):
         d = str(r["trial_started_date"])[:10]
-        if d >= cutoff_d: daily[d]["trials_started"] += 1
+        if d >= cutoff_d:
+            daily[d]["trials_started"] += 1
 daily_list = [{"day": k, **v} for k, v in sorted(daily.items())]
 print(f"  Days: {len(daily_list)}")
 upsert_cache("daily", daily_list)
 
 print(f"\n{'=' * 60}")
-print(f"ALL DONE! Finished at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print(f"ALL DONE at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print(f"Total records processed: {len(rows)}")
 print("=" * 60)
