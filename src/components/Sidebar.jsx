@@ -56,6 +56,8 @@ const NAV_ITEMS = [
     id: 'ott', label: 'OTT / Vimeo', section: 'Analytics & CRM',
     logo: <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="10" fill="#1AB7EA"/><path d="M10 8l6 4-6 4V8z" fill="#fff"/></svg>,
   },
+  { id: 'subscriptions', label: 'Subscriptions & Trials', icon: '📊', section: 'Analytics & CRM' },
+  { id: 'revenue-dashboard', label: 'Revenue Dashboard', icon: '💰', section: 'Analytics & CRM' },
   { id: 'seo',       label: 'SEO Performance',      icon: '🔍', section: 'Insights' },
   { id: 'geo',       label: 'Geographic View',       icon: '🌍', section: 'Insights' },
   { id: 'creatives', label: 'Creative Analysis',     icon: '🎨', section: 'Insights' },

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Routes, Route } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { useApp } from './context/AppContext';
 import { LoginPage } from './pages/LoginPage';
@@ -14,6 +15,8 @@ import { RedditReportPage } from './pages/RedditReportPage';
 import { CombinedReportPage } from './pages/CombinedReportPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
+import { SubscriptionsPage } from './pages/SubscriptionsPage';
+import { RevenueDashboardPage } from './pages/RevenueDashboardPage';
 
 const PLACEHOLDER_PAGES = {
   'bing-ads':     { title: 'Bing Ads', subtitle: 'Microsoft Advertising Performance' },
@@ -41,6 +44,8 @@ function CurrentPage() {
   if (currentPage === 'reddit-ads') return <RedditReportPage />;
   if (currentPage === 'combined-reporting') return <CombinedReportPage />;
   if (currentPage === 'settings') return <SettingsPage />;
+  if (currentPage === 'subscriptions') return <SubscriptionsPage />;
+  if (currentPage === 'revenue-dashboard') return <RevenueDashboardPage />;
 
   const config = PLACEHOLDER_PAGES[currentPage];
   if (config) {
@@ -48,6 +53,19 @@ function CurrentPage() {
   }
 
   return <DashboardPage />;
+}
+
+function AppContent() {
+  return (
+    <div className="app-layout">
+      <Sidebar />
+      <main className="main-content">
+        <Header />
+        <CurrentPage />
+      </main>
+      <NotificationContainer />
+    </div>
+  );
 }
 
 export default function App() {
@@ -83,13 +101,10 @@ export default function App() {
   }
 
   return (
-    <div className="app-layout">
-      <Sidebar />
-      <main className="main-content">
-        <Header />
-        <CurrentPage />
-      </main>
-      <NotificationContainer />
-    </div>
+    <>
+      <Routes>
+        <Route path="*" element={<AppContent />} />
+      </Routes>
+    </>
   );
 }

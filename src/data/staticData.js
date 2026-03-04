@@ -97,6 +97,8 @@ export const STATIC = {
 
 export const PAGE_TITLES = {
   dashboard: 'Executive Dashboard',
+  subscriptions: 'Subscriptions & Trials',
+  'revenue-dashboard': 'Revenue Dashboard',
   'google-ads': 'Google Ads Performance',
   'meta-ads': 'Meta Ads Performance',
   'bing-ads': 'Bing / Microsoft Ads',
