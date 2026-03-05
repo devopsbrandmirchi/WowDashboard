@@ -1,3 +1,4 @@
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 
 const NAV_ITEMS = [
@@ -56,7 +57,9 @@ const NAV_ITEMS = [
     id: 'ott', label: 'OTT / Vimeo', section: 'Analytics & CRM',
     logo: <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="10" fill="#1AB7EA"/><path d="M10 8l6 4-6 4V8z" fill="#fff"/></svg>,
   },
-  { id: 'subscriptions', label: 'Subscriptions & Trials', icon: '📊', section: 'Analytics & CRM' },
+  { id: 'subscriptions', label: 'Subscriptions & Trials', icon: '📊', section: 'Subscriptions' },
+  { id: 'subscriptions-analytics', label: 'Subscription Analytics', icon: '📈', section: 'Subscriptions' },
+  { id: 'subscriptions-subscribers', label: 'Subscriber Intelligence', icon: '👥', section: 'Subscriptions' },
   { id: 'revenue-dashboard', label: 'Revenue Dashboard', icon: '💰', section: 'Analytics & CRM' },
   { id: 'seo',       label: 'SEO Performance',      icon: '🔍', section: 'Insights' },
   { id: 'geo',       label: 'Geographic View',       icon: '🌍', section: 'Insights' },
@@ -76,7 +79,36 @@ function groupBySection(items) {
 
 const sections = groupBySection(NAV_ITEMS);
 
+const PAGE_ROUTES = {
+  'subscriptions-analytics': '/subscriptions/analytics',
+  'subscriptions-subscribers': '/subscriptions/subscribers',
+  'dashboard': '/',
+  'combined-reporting': '/combined-reporting',
+  'google-ads': '/google-ads',
+  'meta-ads': '/meta-ads',
+  'bing-ads': '/bing-ads',
+  'tiktok-ads': '/tiktok-ads',
+  'reddit-ads': '/reddit-ads',
+  'amazon-ads': '/amazon-ads',
+  'dsp': '/dsp',
+  'dating-apps': '/dating-apps',
+  'ctv': '/ctv',
+  'ga4': '/ga4',
+  'email': '/email',
+  'ghl': '/ghl',
+  'ott': '/ott',
+  'subscriptions': '/subscriptions',
+  'revenue-dashboard': '/revenue-dashboard',
+  'seo': '/seo',
+  'geo': '/geo',
+  'creatives': '/creatives',
+  'events': '/events',
+  'settings': '/settings',
+};
+
 export function Sidebar() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { currentPage, showPage, sidebarOpen, sidebarCollapsed, branding, currentClient, handleClientChange, clients } = useApp();
 
   const sidebarClass = ['sidebar', sidebarOpen && 'open', sidebarCollapsed && 'collapsed'].filter(Boolean).join(' ');
@@ -97,12 +129,14 @@ export function Sidebar() {
             {items.map((item) => (
               <li key={item.id}>
                 <a
-                  href="#"
-                  className={currentPage === item.id ? 'active' : ''}
+                  href={PAGE_ROUTES[item.id] || '#'}
+                  className={(currentPage === item.id || (PAGE_ROUTES[item.id] && location.pathname === PAGE_ROUTES[item.id])) ? 'active' : ''}
                   data-tooltip={item.label}
                   onClick={(e) => {
                     e.preventDefault();
                     showPage(item.id);
+                    const path = PAGE_ROUTES[item.id];
+                    if (path) navigate(path);
                   }}
                 >
                   {item.logo ? (
