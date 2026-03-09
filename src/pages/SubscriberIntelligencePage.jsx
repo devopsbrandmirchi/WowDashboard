@@ -36,6 +36,20 @@ function SortTh({ label, col, sort, onSort, align }) {
 
 function num(v) { return Number(v) || 0; }
 
+/** Format month "YYYY-MM" (or parseable date) to "Mar 2026". Never returns "Invalid Date". */
+function formatMonthLabel(monthVal) {
+  if (monthVal == null || monthVal === '') return '—';
+  const s = String(monthVal).trim();
+  if (!s) return '—';
+  if (/^\d{4}-\d{2}$/.test(s)) {
+    const d = new Date(s + '-01');
+    if (!isNaN(d.getTime())) return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+  }
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+  return s;
+}
+
 export function SubscriberIntelligencePage() {
   const {
     loading, error, fetchData, emailListLoading,
@@ -115,15 +129,15 @@ export function SubscriberIntelligencePage() {
   }, [byStatus]);
 
   const trialsData = React.useMemo(() => trialsMonthly.map((r) => {
-    const m = r.month || '';
-    const monthLabel = m.length >= 7 ? new Date(m + '-01').toLocaleString('en-US', { month: 'short', year: 'numeric' }) : m || '—';
+    const monthRaw = r.month ?? r.month_key ?? '';
+    const monthLabel = formatMonthLabel(monthRaw);
     return {
-      month: r.month || '—',
+      month: String(monthRaw || ''),
       monthLabel,
       trialsStarted: num(r.trials_started),
-      converted: num(r.converted),
+      converted: num(r.trial_conversions ?? r.converted),
       stillOnTrial: num(r.still_on_trial),
-      nowActive: num(r.now_active),
+      nowActive: num(r.now_active ?? r.new_subscribers),
     };
   }), [trialsMonthly]);
 

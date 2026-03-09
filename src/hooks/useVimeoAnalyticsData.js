@@ -25,6 +25,8 @@ function prevMonth(monthKey) {
 }
 
 const FETCH_TIMEOUT_MS = 60000;
+/** Keep at 1000 to match typical Supabase/PostgREST row limit and avoid truncated batches */
+const BATCH_SIZE = 1000;
 
 function withTimeout(promise, ms = FETCH_TIMEOUT_MS, msg = 'Request timed out') {
   return Promise.race([
@@ -33,57 +35,103 @@ function withTimeout(promise, ms = FETCH_TIMEOUT_MS, msg = 'Request timed out') 
   ]);
 }
 
+async function fetchCount(table, dateFrom, dateTo) {
+  const { count, error } = await withTimeout(
+    supabase
+      .from(table)
+      .select('*', { count: 'exact', head: true })
+      .gte('stat_date', dateFrom)
+      .lte('stat_date', dateTo),
+    FETCH_TIMEOUT_MS,
+    `Timeout counting ${table}`
+  );
+  if (error) throw error;
+  return count || 0;
+}
+
 async function fetchAllRows(table, columns, dateFrom = '2025-01-01', dateTo = '2025-12-31') {
-  let allData = [];
-  let from = 0;
-  const batchSize = 1000;
-  while (true) {
-    const q = supabase
+  const total = await fetchCount(table, dateFrom, dateTo);
+  if (total === 0) return [];
+
+  const batches = [];
+  for (let from = 0; from < total; from += BATCH_SIZE) {
+    const to = Math.min(from + BATCH_SIZE - 1, total - 1);
+    batches.push({ from, to });
+  }
+
+  const baseQuery = () =>
+    supabase
       .from(table)
       .select(columns)
       .gte('stat_date', dateFrom)
       .lte('stat_date', dateTo)
       .order('stat_date', { ascending: true })
-      .range(from, from + batchSize - 1);
-    const { data, error } = await withTimeout(q, FETCH_TIMEOUT_MS, `Timeout fetching ${table}`);
-    if (error) throw error;
-    allData = allData.concat(data || []);
-    if (!data || data.length < batchSize) break;
-    from += batchSize;
-  }
-  return allData;
+      .order('country', { ascending: true });
+
+  const results = await Promise.all(
+    batches.map(({ from, to }) =>
+      withTimeout(
+        baseQuery().range(from, to),
+        FETCH_TIMEOUT_MS,
+        `Timeout fetching ${table}`
+      ).then(({ data, error }) => {
+        if (error) throw error;
+        return data || [];
+      })
+    )
+  );
+
+  return results.flat();
+}
+
+function thisMonthRange() {
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = String(today.getMonth() + 1).padStart(2, '0');
+  const from = `${y}-${m}-01`;
+  const to = today.toISOString().slice(0, 10);
+  return { from, to };
+}
+
+/** Default date range: December 2025 only. */
+function decemberRange() {
+  return { from: '2025-12-01', to: '2025-12-31' };
 }
 
 export function useVimeoAnalyticsData() {
-  const [dateFrom, setDateFrom] = useState('2025-07-01');
-  const [dateTo, setDateTo] = useState('2025-12-31');
-  const [compareFrom, setCompareFrom] = useState('2025-01-01');
-  const [compareTo, setCompareTo] = useState('2025-06-30');
+  const { from: defaultFrom, to: defaultTo } = decemberRange();
+  const [dateFrom, setDateFrom] = useState(defaultFrom);
+  const [dateTo, setDateTo] = useState(defaultTo);
+  const [compareFrom, setCompareFrom] = useState(null);
+  const [compareTo, setCompareTo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [rawData, setRawData] = useState(null);
 
   const updateDateRange = useCallback((from, to, compFrom, compTo) => {
-    setDateFrom(from || '2025-01-01');
-    setDateTo(to || '2025-12-31');
-    if (compFrom) setCompareFrom(compFrom);
-    if (compTo) setCompareTo(compTo);
+    const { from: fallbackFrom, to: fallbackTo } = decemberRange();
+    setDateFrom(from || fallbackFrom);
+    setDateTo(to || fallbackTo);
+    setCompareFrom(compFrom || null);
+    setCompareTo(compTo || null);
   }, []);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
     setError(null);
+    const from = dateFrom || decemberRange().from;
+    const to = dateTo || decemberRange().to;
     try {
       const [gained, lost, total, trials, trialsLost, trialsTotal, sptGained, sptLost, sptTotal] = await Promise.all([
-        fetchAllRows('subscriptions_gained', 'country, stat_date, gained_subscriptions'),
-        fetchAllRows('subscriptions_lost', 'country, stat_date, lost_subscriptions'),
-        fetchAllRows('subscriptions_total', 'country, stat_date, total_subscriptions'),
-        fetchAllRows('subscriptions_trials_gained', 'country, stat_date, gained_subscriptions_trials'),
-        fetchAllRows('subscriptions_trials_lost', 'country, stat_date, lost_subscriptions_trials').catch(() => []),
-        fetchAllRows('subscriptions_trials_total', 'country, stat_date, total_subscriptions_trials').catch(() => []),
-        fetchAllRows('subscriptions_plus_trials_gained', 'country, stat_date, gained_subscriptions_plus_trials'),
-        fetchAllRows('subscriptions_plus_trials_lost', 'country, stat_date, lost_subscriptions_plus_trials'),
-        fetchAllRows('subscriptions_plus_trials_total', 'country, stat_date, total_subscriptions_plus_trials'),
+        fetchAllRows('subscriptions_gained', 'country, stat_date, gained_subscriptions', from, to),
+        fetchAllRows('subscriptions_lost', 'country, stat_date, lost_subscriptions', from, to),
+        fetchAllRows('subscriptions_total', 'country, stat_date, total_subscriptions', from, to),
+        fetchAllRows('subscriptions_trials_gained', 'country, stat_date, gained_subscriptions_trials', from, to),
+        fetchAllRows('subscriptions_trials_lost', 'country, stat_date, lost_subscriptions_trials', from, to).catch(() => []),
+        fetchAllRows('subscriptions_trials_total', 'country, stat_date, total_subscriptions_trials', from, to).catch(() => []),
+        fetchAllRows('subscriptions_plus_trials_gained', 'country, stat_date, gained_subscriptions_plus_trials', from, to),
+        fetchAllRows('subscriptions_plus_trials_lost', 'country, stat_date, lost_subscriptions_plus_trials', from, to),
+        fetchAllRows('subscriptions_plus_trials_total', 'country, stat_date, total_subscriptions_plus_trials', from, to),
       ]);
       setRawData({ gained, lost, total, trials, trialsLost, trialsTotal, sptGained, sptLost, sptTotal });
     } catch (e) {
@@ -92,7 +140,7 @@ export function useVimeoAnalyticsData() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [dateFrom, dateTo]);
 
   const lastDayByMonth = useMemo(() => {
     const m = {};

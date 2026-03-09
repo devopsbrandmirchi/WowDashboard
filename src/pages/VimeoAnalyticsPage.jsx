@@ -21,7 +21,7 @@ function KpiCard({ label, value, prev, fmt = fI, inverse }) {
       <div className="rkpi-value">{typeof fmt === 'function' ? fmt(value) : value}</div>
       {pct != null && (
         <div className={`kpi-compare ${isGood ? 'kpi-compare-good' : 'kpi-compare-bad'}`}>
-          <span className="kpi-prev">vs {fmt(prev)}</span>
+          <span className="kpi-prev">{fmt(prev)}</span>
           <span className="kpi-compare-arrow">{pct >= 0 ? '▲' : '▼'}</span>
           <span className="kpi-compare-pct">{Math.abs(pct).toFixed(1)}%</span>
         </div>
@@ -59,8 +59,8 @@ export function VimeoAnalyticsPage() {
   const [expandedKey, setExpandedKey] = useState(null);
   const [monthSort, setMonthSort] = useState({ col: 'month', dir: 'asc' });
   const [countrySort, setCountrySort] = useState({ col: 'active', dir: 'desc' });
-  const [datePreset, setDatePreset] = useState('2025');
-  const [compareOn, setCompareOn] = useState(true);
+  const [datePreset, setDatePreset] = useState('custom');
+  const [compareOn, setCompareOn] = useState(false);
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
 
@@ -444,14 +444,14 @@ export function VimeoAnalyticsPage() {
               <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, background: '#1AB7EA', color: 'white', borderRadius: 8, fontSize: 16, fontWeight: 700 }}>V</span>
               Vimeo Subscription Analytics
             </h2>
-            <p>Aggregated subscription metrics (Jan–Dec 2025)</p>
+            <p>Aggregated subscription metrics (December 2025)</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <DateRangePicker
               preset={datePreset}
               dateFrom={dateFrom}
               dateTo={dateTo}
-              compareOn={true}
+              compareOn={false}
               compareFrom={compareFrom}
               compareTo={compareTo}
               onApply={handleDateApply}
