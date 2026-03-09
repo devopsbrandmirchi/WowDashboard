@@ -97,27 +97,13 @@ export const STATIC = {
 
 export const PAGE_TITLES = {
   dashboard: 'Executive Dashboard',
-  subscriptions: 'Subscriptions & Trials',
   'subscriptions-analytics': 'Subscription Analytics',
   'subscriptions-subscribers': 'Subscriber Intelligence',
-  'revenue-dashboard': 'Revenue Dashboard',
   'google-ads': 'Google Ads Performance',
   'meta-ads': 'Meta Ads Performance',
   'bing-ads': 'Bing / Microsoft Ads',
   'tiktok-ads': 'TikTok Ads Performance',
   'reddit-ads': 'Reddit Ads Performance',
-  'amazon-ads': 'Amazon Ads Performance',
-  dsp: 'DSP / Programmatic',
-  'dating-apps': 'Dating Apps / Direct Buys',
-  ctv: 'CTV Campaigns',
-  ga4: 'GA4 / Web Analytics',
-  email: 'Email Marketing',
-  ghl: 'GoHighLevel CRM',
-  ott: 'OTT / Vimeo',
-  seo: 'SEO Performance',
-  geo: 'Geographic View',
-  creatives: 'Creative Analysis',
-  events: 'Events / Special Campaigns',
   settings: 'White-Label Settings',
 };
 

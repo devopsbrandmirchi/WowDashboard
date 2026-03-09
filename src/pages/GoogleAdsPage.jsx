@@ -144,7 +144,7 @@ function SortTh({ label, col, sort, onSort, align }) {
 /* ──────────────── MAIN COMPONENT ──────────────── */
 export function GoogleAdsPage() {
   const { branding, registerExportPdf } = useApp();
-  const { filters, updateFilter, batchUpdateFilters, fetchData, loading, error, customers, channelTypes, kpis, compareKpis, campaignTypes, campaigns, adGroups, keywords, geoData, countryData, productData, showsData, conversionsData, dailyTrends, compareDailyTrends } = useGoogleAdsData();
+  const { filters, updateFilter, batchUpdateFilters, fetchData, loading, error, channelTypes, kpis, compareKpis, campaignTypes, campaigns, adGroups, keywords, geoData, countryData, productData, showsData, conversionsData, dailyTrends, compareDailyTrends } = useGoogleAdsData();
 
   const [activeTab, setActiveTab] = useState('campaigntypes');
   const [kpiCollapsed, setKpiCollapsed] = useState(false);
@@ -595,13 +595,6 @@ export function GoogleAdsPage() {
         {/* ── Filter Bar ── */}
         <div className="gads-filter-bar" id="gads-filter-bar">
           <div className="gads-filter-row">
-            <div className="gads-filter-group gads-fg-sm">
-              <label>Customer</label>
-              <select value={filters.customerId} onChange={(e) => updateFilter('customerId', e.target.value)}>
-                <option value="ALL">All Customers</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
             <div className="gads-filter-group gads-fg-sm"><label>Type</label>
               <select value={filters.channelType} onChange={(e) => updateFilter('channelType', e.target.value)}>
                 <option value="all">All Types</option>{channelTypes.map((t) => <option key={t} value={t}>{t}</option>)}

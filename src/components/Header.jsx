@@ -2,28 +2,8 @@ import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 
 export function Header() {
-  const { headerTitle, toggleSidebar, sidebarCollapsed, collapseSidebar, triggerExportPdf, showNotification } = useApp();
+  const { headerTitle, toggleSidebar, sidebarCollapsed, collapseSidebar } = useApp();
   const { logout } = useAuth();
-
-  const handleShare = () => {
-    if (navigator.share) {
-      navigator.share({
-        title: 'Agency Dashboard Report',
-        text: 'Check out this marketing performance report!',
-        url: window.location.href,
-      }).catch(() => fallbackShare());
-    } else {
-      fallbackShare();
-    }
-  };
-
-  const fallbackShare = () => {
-    navigator.clipboard?.writeText(window.location.href).then(() => {
-      showNotification('Report link copied to clipboard!');
-    }).catch(() => {
-      showNotification('Share URL: ' + window.location.href);
-    });
-  };
 
   return (
     <header className="header">
@@ -46,8 +26,6 @@ export function Header() {
         <div className="header-filters" id="headerFilters">
           <span id="sb-sync-badge" style={{ color: 'var(--accent)', fontSize: 11, fontWeight: 600 }}>Live</span>
         </div>
-        <button type="button" className="btn btn-outline" onClick={triggerExportPdf}>↓ Export PDF</button>
-        <button type="button" className="btn btn-primary" onClick={handleShare}>Share Report</button>
         <button type="button" className="btn btn-outline" onClick={logout} title="Sign out">Log out</button>
       </div>
     </header>

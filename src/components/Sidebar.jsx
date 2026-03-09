@@ -25,46 +25,8 @@ const NAV_ITEMS = [
     id: 'reddit-ads', label: 'Reddit Ads', section: 'Ad Platforms',
     logo: <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="10" fill="#FF4500"/><path d="M16.67 13.38c.03.16.05.33.05.5 0 2.56-2.98 4.63-6.67 4.63-3.69 0-6.67-2.07-6.67-4.63 0-.17.02-.34.05-.5a1.5 1.5 0 01-.6-1.2 1.52 1.52 0 012.75-.88c1.2-.81 2.84-1.33 4.63-1.4l.87-4.1a.3.3 0 01.36-.24l2.9.62a1.07 1.07 0 112.02.18l-2.7-.58-.78 3.7c1.77.07 3.38.59 4.57 1.4a1.52 1.52 0 012.75.88c0 .47-.22.9-.57 1.18zM8.17 13.38a1.25 1.25 0 100 2.5 1.25 1.25 0 000-2.5zm5.92 2.5a1.25 1.25 0 100-2.5 1.25 1.25 0 000 2.5zm-.4 1.46c-.96.72-2.2 1.03-3.6 1.03-1.4 0-2.64-.31-3.6-1.03a.3.3 0 01.4-.44c.81.6 1.88.91 3.2.91s2.39-.31 3.2-.91a.3.3 0 01.4.44z" fill="#fff"/></svg>,
   },
-  {
-    id: 'amazon-ads', label: 'Amazon Ads', section: 'Ad Platforms',
-    logo: <svg viewBox="0 0 24 24" width="16" height="16"><path d="M14.43 16.7c-4.1 3.04-10.06 4.66-15.18 4.66C-.18 21.36.08 21.1.33 20.84c4.69-4 10.48-6.4 16.45-6.4 2.4 0 4.93.5 7.3 1.51.36.16.06.39-.19.37a23.16 23.16 0 00-9.46.38z" fill="#FF9900"/><path d="M6.5 12.07c0-1.04.08-1.87.24-2.51a5.06 5.06 0 01.74-1.72 3.19 3.19 0 011.28-1.02A4.22 4.22 0 0110.46 6.4c.64 0 1.2.06 1.68.19.48.13.94.33 1.38.62v-.61c0-.97-.2-1.65-.62-2.06-.41-.41-1.07-.61-1.97-.61-.44 0-.91.06-1.41.19a10.6 10.6 0 00-1.54.55l-.48-1.94c.58-.28 1.2-.5 1.86-.65.66-.16 1.3-.24 1.9-.24 1.61 0 2.78.4 3.52 1.19s1.1 2 1.1 3.62v7.1h-2.14l-.21-1.3h-.07a5.08 5.08 0 01-1.52 1.14c-.58.29-1.23.43-1.93.43-1.14 0-2.03-.35-2.67-1.06-.64-.7-.96-1.7-.96-2.99zm2.44-.18c0 .76.17 1.34.51 1.73.34.39.82.59 1.44.59.52 0 .99-.14 1.4-.43.41-.29.76-.65 1.04-1.1V10.2a3.97 3.97 0 00-1.22-.52 4.78 4.78 0 00-1.18-.15c-.72 0-1.26.26-1.63.77-.37.51-.55 1.14-.55 1.87l.19-.28z" fill="#fff"/></svg>,
-  },
-  {
-    id: 'dsp', label: 'DSP (TTD / DV360)', section: 'Programmatic & CTV',
-    logo: <svg viewBox="0 0 24 24" width="16" height="16"><rect width="24" height="24" rx="4" fill="#2BC4C4"/><path d="M6 8h4v8H6zm4-2h4v12h-4zm4 4h4v4h-4z" fill="#fff"/></svg>,
-  },
-  {
-    id: 'dating-apps', label: 'Dating Apps / Direct', section: 'Programmatic & CTV',
-    logo: <svg viewBox="0 0 24 24" width="16" height="16"><rect width="24" height="24" rx="4" fill="#E91E63"/><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="#fff"/></svg>,
-  },
-  {
-    id: 'ctv', label: 'CTV Campaigns', section: 'Programmatic & CTV',
-    logo: <svg viewBox="0 0 24 24" width="16" height="16"><rect width="24" height="24" rx="4" fill="#8B3F8E"/><path d="M4 5h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zm4 14h8m-4-2v2" stroke="#fff" strokeWidth="1.5" fill="none" strokeLinecap="round"/><path d="M9 9l6 3-6 3V9z" fill="#fff"/></svg>,
-  },
-  {
-    id: 'ga4', label: 'GA4 / Web Analytics', section: 'Analytics & CRM',
-    logo: <svg viewBox="0 0 24 24" width="16" height="16"><path d="M3.14 16.5l4.94-8.57a2 2 0 013.46 0L16.47 16.5a2 2 0 01-1.73 3H4.87a2 2 0 01-1.73-3z" fill="#E37400"/><circle cx="18.5" cy="17" r="3" fill="#F9AB00"/><circle cx="18.5" cy="7" r="3" fill="#E37400"/></svg>,
-  },
-  {
-    id: 'email', label: 'Email Marketing', section: 'Analytics & CRM',
-    logo: <svg viewBox="0 0 24 24" width="16" height="16"><rect width="24" height="24" rx="4" fill="#FF7A59"/><path d="M4 7l8 5 8-5M4 7v10h16V7" stroke="#fff" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  },
-  {
-    id: 'ghl', label: 'GoHighLevel', section: 'Analytics & CRM',
-    logo: <svg viewBox="0 0 24 24" width="16" height="16"><rect width="24" height="24" rx="4" fill="#28A745"/><path d="M7 13l3 3 7-7" stroke="#fff" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  },
-  {
-    id: 'ott', label: 'OTT / Vimeo', section: 'Analytics & CRM',
-    logo: <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="10" fill="#1AB7EA"/><path d="M10 8l6 4-6 4V8z" fill="#fff"/></svg>,
-  },
-  { id: 'subscriptions', label: 'Subscriptions & Trials', icon: '📊', section: 'Subscriptions' },
   { id: 'subscriptions-analytics', label: 'Subscription Analytics', icon: '📈', section: 'Subscriptions' },
   { id: 'subscriptions-subscribers', label: 'Subscriber Intelligence', icon: '👥', section: 'Subscriptions' },
-  { id: 'revenue-dashboard', label: 'Revenue Dashboard', icon: '💰', section: 'Analytics & CRM' },
-  { id: 'seo',       label: 'SEO Performance',      icon: '🔍', section: 'Insights' },
-  { id: 'geo',       label: 'Geographic View',       icon: '🌍', section: 'Insights' },
-  { id: 'creatives', label: 'Creative Analysis',     icon: '🎨', section: 'Insights' },
-  { id: 'events',    label: 'Events / Special',      icon: '🎪', section: 'Insights' },
   { id: 'settings',  label: 'White-Label Settings',  icon: '⚙️', section: 'System' },
 ];
 
@@ -89,27 +51,13 @@ const PAGE_ROUTES = {
   'bing-ads': '/bing-ads',
   'tiktok-ads': '/tiktok-ads',
   'reddit-ads': '/reddit-ads',
-  'amazon-ads': '/amazon-ads',
-  'dsp': '/dsp',
-  'dating-apps': '/dating-apps',
-  'ctv': '/ctv',
-  'ga4': '/ga4',
-  'email': '/email',
-  'ghl': '/ghl',
-  'ott': '/ott',
-  'subscriptions': '/subscriptions',
-  'revenue-dashboard': '/revenue-dashboard',
-  'seo': '/seo',
-  'geo': '/geo',
-  'creatives': '/creatives',
-  'events': '/events',
   'settings': '/settings',
 };
 
 export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { currentPage, showPage, sidebarOpen, sidebarCollapsed, branding, currentClient, handleClientChange, clients } = useApp();
+  const { currentPage, showPage, sidebarOpen, sidebarCollapsed, branding } = useApp();
 
   const sidebarClass = ['sidebar', sidebarOpen && 'open', sidebarCollapsed && 'collapsed'].filter(Boolean).join(' ');
 
@@ -131,7 +79,6 @@ export function Sidebar() {
                 <a
                   href={PAGE_ROUTES[item.id] || '#'}
                   className={(currentPage === item.id || (PAGE_ROUTES[item.id] && location.pathname === PAGE_ROUTES[item.id])) ? 'active' : ''}
-                  data-tooltip={item.label}
                   onClick={(e) => {
                     e.preventDefault();
                     showPage(item.id);
@@ -151,18 +98,6 @@ export function Sidebar() {
           </ul>
         </div>
       ))}
-
-      <div className="sidebar-footer">
-        <select
-          className="client-selector"
-          value={currentClient || 'Select Client...'}
-          onChange={(e) => handleClientChange(e.target.value)}
-        >
-          {clients.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-      </div>
     </aside>
   );
 }

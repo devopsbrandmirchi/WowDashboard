@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { PAGE_TITLES, CLIENTS } from '../data/staticData';
+import { PAGE_TITLES } from '../data/staticData';
 
 const STORAGE_KEYS = {
   agencyName: 'agencyName',
@@ -16,7 +16,6 @@ export function AppProvider({ children }) {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [currentClient, setCurrentClient] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [branding, setBranding] = useState(() => ({
     agencyName: localStorage.getItem(STORAGE_KEYS.agencyName) || 'chipper',
@@ -68,13 +67,6 @@ export function AppProvider({ children }) {
 
   const toggleSidebar = useCallback(() => setSidebarOpen((o) => !o), []);
   const collapseSidebar = useCallback(() => setSidebarCollapsed((c) => !c), []);
-
-  const handleClientChange = useCallback((value) => {
-    setCurrentClient(value === 'Select Client...' ? null : value);
-    if (value && value !== 'Select Client...') {
-      showNotification('Client switched to: ' + value);
-    }
-  }, [showNotification]);
 
   const updateBranding = useCallback((agencyName, agencyLogo) => {
     setBranding({ agencyName: agencyName || branding.agencyName, agencyLogo: agencyLogo ?? branding.agencyLogo });
@@ -144,15 +136,12 @@ export function AppProvider({ children }) {
     toggleSidebar,
     sidebarCollapsed,
     collapseSidebar,
-    currentClient,
-    handleClientChange,
     showNotification,
     branding,
     updateBranding,
     colors,
     updateColors,
     resetSettings,
-    clients: ['Select Client...', ...CLIENTS],
     registerExportPdf,
     triggerExportPdf,
   };

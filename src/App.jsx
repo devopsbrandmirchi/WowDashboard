@@ -15,25 +15,11 @@ import { RedditReportPage } from './pages/RedditReportPage';
 import { CombinedReportPage } from './pages/CombinedReportPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
-import { SubscriptionsPage } from './pages/SubscriptionsPage';
-import { RevenueDashboardPage } from './pages/RevenueDashboardPage';
 import { VimeoAnalyticsPage } from './pages/VimeoAnalyticsPage';
 import { SubscriberIntelligencePage } from './pages/SubscriberIntelligencePage';
 
 const PLACEHOLDER_PAGES = {
   'bing-ads':     { title: 'Bing Ads', subtitle: 'Microsoft Advertising Performance' },
-  'amazon-ads':   { title: 'Amazon Ads', subtitle: 'Amazon Advertising Performance' },
-  'dsp':          { title: 'DSP / Programmatic', subtitle: 'The Trade Desk & DV360 Performance' },
-  'dating-apps':  { title: 'Dating Apps', subtitle: 'Direct Buy Performance' },
-  'ctv':          { title: 'CTV Campaigns', subtitle: 'Connected TV Performance' },
-  'ga4':          { title: 'GA4 / Web Analytics', subtitle: 'Website Performance Data' },
-  'email':        { title: 'Email Marketing', subtitle: 'Email Campaign Performance' },
-  'ghl':          { title: 'GoHighLevel', subtitle: 'CRM Performance Metrics' },
-  'ott':          { title: 'OTT / Vimeo', subtitle: 'Video Streaming Performance' },
-  'seo':          { title: 'SEO Performance', subtitle: 'Organic Search Rankings' },
-  'geo':          { title: 'Geographic View', subtitle: 'Performance by Location' },
-  'creatives':    { title: 'Creative Analysis', subtitle: 'Ad Creative Performance' },
-  'events':       { title: 'Events / Special', subtitle: 'Special Campaign Performance' },
 };
 
 const PATH_TO_PAGE = {
@@ -46,20 +32,6 @@ const PATH_TO_PAGE = {
   '/bing-ads': 'bing-ads',
   '/tiktok-ads': 'tiktok-ads',
   '/reddit-ads': 'reddit-ads',
-  '/amazon-ads': 'amazon-ads',
-  '/dsp': 'dsp',
-  '/dating-apps': 'dating-apps',
-  '/ctv': 'ctv',
-  '/ga4': 'ga4',
-  '/email': 'email',
-  '/ghl': 'ghl',
-  '/ott': 'ott',
-  '/subscriptions': 'subscriptions',
-  '/revenue-dashboard': 'revenue-dashboard',
-  '/seo': 'seo',
-  '/geo': 'geo',
-  '/creatives': 'creatives',
-  '/events': 'events',
   '/settings': 'settings',
 };
 
@@ -81,10 +53,8 @@ function CurrentPage({ forcePage }) {
   if (page === 'reddit-ads') return <RedditReportPage />;
   if (page === 'combined-reporting') return <CombinedReportPage />;
   if (page === 'settings') return <SettingsPage />;
-  if (page === 'subscriptions') return <SubscriptionsPage />;
   if (page === 'subscriptions-analytics') return <VimeoAnalyticsPage />;
   if (page === 'subscriptions-subscribers') return <SubscriberIntelligencePage />;
-  if (page === 'revenue-dashboard') return <RevenueDashboardPage />;
 
   const config = PLACEHOLDER_PAGES[page];
   if (config) {

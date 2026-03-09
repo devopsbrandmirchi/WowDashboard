@@ -430,14 +430,6 @@ export function MetaReportPage() {
         <div className="gads-filter-bar" id="meta-filter-bar">
           <div className="gads-filter-row">
             <div className="gads-filter-group gads-fg-sm">
-              <label>Customer</label>
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-                {(filterOptions?.customers || []).map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="gads-filter-group gads-fg-sm">
               <label>Type</label>
               <select value={productType} onChange={(e) => setProductType(e.target.value)}>
                 {(filterOptions?.productTypes || []).map((t) => (
