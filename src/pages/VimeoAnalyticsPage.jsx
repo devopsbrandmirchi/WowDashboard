@@ -178,8 +178,12 @@ export function VimeoAnalyticsPage() {
     return (monthByCountry[country] || []).filter((r) => monthInRange(r.month, dateFrom, dateTo));
   };
 
+  const hasDailyData = dailyData?.length > 0;
+
   const chartData = useMemo(() => {
-    if (!dailyData?.length) return null;
+    if (!hasDailyData) {
+      return { labels: [], datasets: [], empty: true };
+    }
     const labels = dailyData.map((d) => (d.date || '').slice(5, 10).replace('-', '/'));
     const comp = dailyCompareData || [];
     const pad = (arr, len) => [...arr, ...Array(Math.max(0, len - arr.length)).fill(null)];
@@ -204,7 +208,7 @@ export function VimeoAnalyticsPage() {
         sets.push({ label: 'Lost (prev)', data: compLost, borderColor: '#ED1C24', borderDash: dash, tension: 0.35, fill: false });
         sets.push({ label: 'Net (prev)', data: compNet, borderColor: '#1AB7EA', borderDash: dash, tension: 0.35, fill: false });
       }
-      return { labels, datasets: sets };
+      return { labels, datasets: sets, empty: false };
     }
     if (activeTab === 'trials') {
       const sets = [
@@ -217,7 +221,7 @@ export function VimeoAnalyticsPage() {
         sets.push({ label: 'Trials Lost (prev)', data: compTrialsLost, borderColor: '#ED1C24', borderDash: dash, tension: 0.35, fill: false });
         sets.push({ label: 'Trials Net (prev)', data: compTrialsNet, borderColor: '#F5A623', borderDash: dash, tension: 0.35, fill: false });
       }
-      return { labels, datasets: sets };
+      return { labels, datasets: sets, empty: false };
     }
     const sets = [
       { label: 'S+T Gained', data: dailyData.map((d) => d.plusGained), borderColor: '#2E9E40', tension: 0.35, fill: false },
@@ -229,25 +233,57 @@ export function VimeoAnalyticsPage() {
       sets.push({ label: 'S+T Lost (prev)', data: compPlusLost, borderColor: '#ED1C24', borderDash: dash, tension: 0.35, fill: false });
       sets.push({ label: 'S+T Net (prev)', data: compPlusNet, borderColor: '#1AB7EA', borderDash: dash, tension: 0.35, fill: false });
     }
-    return { labels, datasets: sets };
-  }, [dailyData, dailyCompareData, activeTab, compareOn]);
+    return { labels, datasets: sets, empty: false };
+  }, [dailyData, dailyCompareData, activeTab, compareOn, hasDailyData]);
+
+  const noDataPlugin = useMemo(() => ({
+    id: 'noData',
+    afterDraw(chart) {
+      const ds = chart.data?.datasets || [];
+      const hasData = ds.length > 0 && ds.some((d) => d.data?.length > 0);
+      if (!hasData) {
+        const { ctx, width, height } = chart;
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.font = 'bold 24px sans-serif';
+        ctx.fillStyle = '#555';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('No data', width / 2, height / 2);
+        ctx.restore();
+      }
+    },
+  }), []);
 
   useEffect(() => {
-    if (!chartRef.current || !chartData) return;
+    if (!chartRef.current) return;
     if (chartInstance.current) chartInstance.current.destroy();
+    const isEmpty = chartData?.empty;
+    const data = isEmpty
+      ? { labels: [], datasets: [] }
+      : { labels: chartData.labels, datasets: chartData.datasets };
     chartInstance.current = new Chart(chartRef.current, {
       type: 'line',
-      data: chartData,
+      data,
       options: {
         responsive: true,
         maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
         plugins: { tooltip: { mode: 'index', intersect: false } },
-        scales: { x: { grid: { display: false } }, y: { beginAtZero: true } },
+        scales: isEmpty
+          ? {
+              x: { display: false, grid: { display: false } },
+              y: { display: false, grid: { display: false } },
+            }
+          : {
+              x: { grid: { display: false } },
+              y: { beginAtZero: true },
+            },
       },
+      plugins: [noDataPlugin],
     });
     return () => { if (chartInstance.current) chartInstance.current.destroy(); };
-  }, [chartData]);
+  }, [chartData, noDataPlugin]);
 
   const netCell = (val) => (
     <span style={{ color: val >= 0 ? '#2E9E40' : '#ED1C24' }}>{(val >= 0 ? '+' : '') + fI(val)}</span>
