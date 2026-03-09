@@ -18,6 +18,29 @@ function monthEnd(monthKey) {
   return `${y}-${String(m).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
 }
 
+/** Returns ['YYYY-MM', ...] for every month between dateFrom and dateTo (inclusive). */
+function monthsInRange(dateFrom, dateTo) {
+  if (!dateFrom || !dateTo) return [];
+  const fromStr = dateFrom.slice(0, 7);
+  const toStr = dateTo.slice(0, 7);
+  if (fromStr > toStr) return [];
+  const [y1, m1] = fromStr.split('-').map(Number);
+  const [y2, m2] = toStr.split('-').map(Number);
+  const months = [];
+  let y = y1;
+  let m = m1;
+  while (y < y2 || (y === y2 && m <= m2)) {
+    months.push(`${y}-${String(m).padStart(2, '0')}`);
+    if (m === 12) {
+      y += 1;
+      m = 1;
+    } else {
+      m += 1;
+    }
+  }
+  return months;
+}
+
 function prevMonth(monthKey) {
   const [y, m] = monthKey.split('-').map(Number);
   if (m === 1) return '2024-12';
@@ -93,18 +116,18 @@ function thisMonthRange() {
   return { from, to };
 }
 
-/** Default date range: December 2025 only. */
-function decemberRange() {
-  return { from: '2025-12-01', to: '2025-12-31' };
+/** Default date range: Feb 1 to Feb 28, 2026. */
+function defaultDateRange() {
+  return { from: '2026-02-01', to: '2026-02-28' };
 }
 
-/** Previous month for comparison (November 2025). */
+/** Previous month for comparison (January 2026). */
 function defaultCompareRange() {
-  return { from: '2025-11-01', to: '2025-11-30' };
+  return { from: '2026-01-01', to: '2026-01-31' };
 }
 
 export function useVimeoAnalyticsData() {
-  const { from: defaultFrom, to: defaultTo } = decemberRange();
+  const { from: defaultFrom, to: defaultTo } = defaultDateRange();
   const { from: defaultCompareFrom, to: defaultCompareTo } = defaultCompareRange();
   const [dateFrom, setDateFrom] = useState(defaultFrom);
   const [dateTo, setDateTo] = useState(defaultTo);
@@ -115,7 +138,7 @@ export function useVimeoAnalyticsData() {
   const [rawData, setRawData] = useState(null);
 
   const updateDateRange = useCallback((from, to, compFrom, compTo) => {
-    const { from: fallbackFrom, to: fallbackTo } = decemberRange();
+    const { from: fallbackFrom, to: fallbackTo } = defaultDateRange();
     setDateFrom(from || fallbackFrom);
     setDateTo(to || fallbackTo);
     setCompareFrom(compFrom || null);
@@ -125,8 +148,8 @@ export function useVimeoAnalyticsData() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const from = dateFrom || decemberRange().from;
-    const to = dateTo || decemberRange().to;
+    const from = dateFrom || defaultDateRange().from;
+    const to = dateTo || defaultDateRange().to;
     const cf = compareFrom || null;
     const ct = compareTo || null;
     const fetchFrom = cf ? (from < cf ? from : cf) : from;
@@ -152,17 +175,19 @@ export function useVimeoAnalyticsData() {
     }
   }, [dateFrom, dateTo, compareFrom, compareTo]);
 
+  const rangeMonths = useMemo(() => monthsInRange(dateFrom, dateTo), [dateFrom, dateTo]);
+
   const lastDayByMonth = useMemo(() => {
     const m = {};
-    MONTHS_2025.forEach((mk) => { m[mk] = monthEnd(mk); });
+    rangeMonths.forEach((mk) => { m[mk] = monthEnd(mk); });
     return m;
-  }, []);
+  }, [rangeMonths]);
 
   const monthlySummary = useMemo(() => {
     if (!rawData) return [];
     const { gained, lost, total, trials, trialsLost, trialsTotal, sptGained, sptLost, sptTotal } = rawData;
     const byMonth = {};
-    MONTHS_2025.forEach((mk) => {
+    rangeMonths.forEach((mk) => {
       byMonth[mk] = { gained: 0, lost: 0, trials: 0, trialsLost: 0, trialsActive: 0, plusGained: 0, plusLost: 0, active: 0, sptActive: 0 };
     });
     gained.forEach((r) => {
@@ -207,8 +232,8 @@ export function useVimeoAnalyticsData() {
         byMonth[mk].sptActive += num(r.total_subscriptions_plus_trials);
       }
     });
-    return MONTHS_2025.map((mk) => {
-      const d = byMonth[mk];
+    return rangeMonths.map((mk) => {
+      const d = byMonth[mk] || {};
       const gained = d.gained || 0;
       const lost = d.lost || 0;
       const trials = d.trials || 0;
@@ -232,7 +257,7 @@ export function useVimeoAnalyticsData() {
         sptActive: d.sptActive || 0,
       };
     });
-  }, [rawData, lastDayByMonth]);
+  }, [rawData, lastDayByMonth, rangeMonths]);
 
   const countryByMonth = useMemo(() => {
     if (!rawData) return {};
@@ -289,11 +314,11 @@ export function useVimeoAnalyticsData() {
       if (!result[r.month]) result[r.month] = [];
       result[r.month].push(row);
     });
-    MONTHS_2025.forEach((m) => {
+    rangeMonths.forEach((m) => {
       if (result[m]) result[m].sort((a, b) => (b.active || 0) - (a.active || 0));
     });
     return result;
-  }, [rawData, lastDayByMonth]);
+  }, [rawData, lastDayByMonth, rangeMonths]);
 
   const monthByCountry = useMemo(() => {
     const result = {};
@@ -453,6 +478,6 @@ export function useVimeoAnalyticsData() {
     dailyCompareData,
     kpis,
     compareKpis,
-    months: MONTHS_2025,
+    months: rangeMonths,
   };
 }
