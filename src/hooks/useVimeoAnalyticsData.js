@@ -98,12 +98,18 @@ function decemberRange() {
   return { from: '2025-12-01', to: '2025-12-31' };
 }
 
+/** Previous month for comparison (November 2025). */
+function defaultCompareRange() {
+  return { from: '2025-11-01', to: '2025-11-30' };
+}
+
 export function useVimeoAnalyticsData() {
   const { from: defaultFrom, to: defaultTo } = decemberRange();
+  const { from: defaultCompareFrom, to: defaultCompareTo } = defaultCompareRange();
   const [dateFrom, setDateFrom] = useState(defaultFrom);
   const [dateTo, setDateTo] = useState(defaultTo);
-  const [compareFrom, setCompareFrom] = useState(null);
-  const [compareTo, setCompareTo] = useState(null);
+  const [compareFrom, setCompareFrom] = useState(defaultCompareFrom);
+  const [compareTo, setCompareTo] = useState(defaultCompareTo);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [rawData, setRawData] = useState(null);
@@ -121,17 +127,21 @@ export function useVimeoAnalyticsData() {
     setError(null);
     const from = dateFrom || decemberRange().from;
     const to = dateTo || decemberRange().to;
+    const cf = compareFrom || null;
+    const ct = compareTo || null;
+    const fetchFrom = cf ? (from < cf ? from : cf) : from;
+    const fetchTo = ct ? (to > ct ? to : ct) : to;
     try {
       const [gained, lost, total, trials, trialsLost, trialsTotal, sptGained, sptLost, sptTotal] = await Promise.all([
-        fetchAllRows('subscriptions_gained', 'country, stat_date, gained_subscriptions', from, to),
-        fetchAllRows('subscriptions_lost', 'country, stat_date, lost_subscriptions', from, to),
-        fetchAllRows('subscriptions_total', 'country, stat_date, total_subscriptions', from, to),
-        fetchAllRows('subscriptions_trials_gained', 'country, stat_date, gained_subscriptions_trials', from, to),
-        fetchAllRows('subscriptions_trials_lost', 'country, stat_date, lost_subscriptions_trials', from, to).catch(() => []),
-        fetchAllRows('subscriptions_trials_total', 'country, stat_date, total_subscriptions_trials', from, to).catch(() => []),
-        fetchAllRows('subscriptions_plus_trials_gained', 'country, stat_date, gained_subscriptions_plus_trials', from, to),
-        fetchAllRows('subscriptions_plus_trials_lost', 'country, stat_date, lost_subscriptions_plus_trials', from, to),
-        fetchAllRows('subscriptions_plus_trials_total', 'country, stat_date, total_subscriptions_plus_trials', from, to),
+        fetchAllRows('subscriptions_gained', 'country, stat_date, gained_subscriptions', fetchFrom, fetchTo),
+        fetchAllRows('subscriptions_lost', 'country, stat_date, lost_subscriptions', fetchFrom, fetchTo),
+        fetchAllRows('subscriptions_total', 'country, stat_date, total_subscriptions', fetchFrom, fetchTo),
+        fetchAllRows('subscriptions_trials_gained', 'country, stat_date, gained_subscriptions_trials', fetchFrom, fetchTo),
+        fetchAllRows('subscriptions_trials_lost', 'country, stat_date, lost_subscriptions_trials', fetchFrom, fetchTo).catch(() => []),
+        fetchAllRows('subscriptions_trials_total', 'country, stat_date, total_subscriptions_trials', fetchFrom, fetchTo).catch(() => []),
+        fetchAllRows('subscriptions_plus_trials_gained', 'country, stat_date, gained_subscriptions_plus_trials', fetchFrom, fetchTo),
+        fetchAllRows('subscriptions_plus_trials_lost', 'country, stat_date, lost_subscriptions_plus_trials', fetchFrom, fetchTo),
+        fetchAllRows('subscriptions_plus_trials_total', 'country, stat_date, total_subscriptions_plus_trials', fetchFrom, fetchTo),
       ]);
       setRawData({ gained, lost, total, trials, trialsLost, trialsTotal, sptGained, sptLost, sptTotal });
     } catch (e) {
@@ -140,7 +150,7 @@ export function useVimeoAnalyticsData() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo]);
+  }, [dateFrom, dateTo, compareFrom, compareTo]);
 
   const lastDayByMonth = useMemo(() => {
     const m = {};
