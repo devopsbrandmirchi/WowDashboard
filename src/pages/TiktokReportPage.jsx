@@ -283,12 +283,21 @@ export function TiktokReportPage() {
   const sorted = sortRows(currentData, s.col, s.dir);
   const info = paginate(sorted, pg[activeTab] || 1);
 
+  const formatDayDisplay = (dateStr) => {
+    if (!dateStr || typeof dateStr !== 'string') return dateStr || '';
+    const parts = dateStr.split('-');
+    if (parts.length < 3) return dateStr;
+    const [y, m, d] = parts.map(Number);
+    if (!y || !m || !d) return dateStr;
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${months[m - 1]} ${String(d).padStart(2, '0')}, ${y}`;
+  };
   const nameCol = {
     col: 'name',
     label: currentTabConfig.nameColLabel,
     dim: true,
     clamp: true,
-    cell: (r) => r.name,
+    cell: (r) => (activeTab === 'day' ? formatDayDisplay(r.name) : r.name),
     total: () => (totals ? currentTabConfig.totalLabel(currentData.length) : ''),
   };
   const tableCols = [nameCol, ...METRIC_COLS];

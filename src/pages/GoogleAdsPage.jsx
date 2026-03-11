@@ -18,12 +18,10 @@ const TABS = [
   { id: 'campaigns', label: 'Campaigns' },
   { id: 'adgroups', label: 'Ad Groups' },
   { id: 'keywords', label: 'Keywords' },
-  // { id: 'searchterms', label: 'Search Terms' },
-  // { id: 'geo', label: 'Geo' },
   { id: 'country', label: 'Country' },
   { id: 'product', label: 'Product' },
   { id: 'shows', label: 'Titles' },
-  // { id: 'conversions', label: 'Conversions' },
+  { id: 'day', label: 'Day' },
 ];
 
 const CHART_METRICS = [
@@ -144,14 +142,14 @@ function SortTh({ label, col, sort, onSort, align }) {
 /* ──────────────── MAIN COMPONENT ──────────────── */
 export function GoogleAdsPage() {
   const { branding, registerExportPdf } = useApp();
-  const { filters, updateFilter, batchUpdateFilters, fetchData, loading, error, channelTypes, kpis, compareKpis, campaignTypes, campaigns, adGroups, keywords, geoData, countryData, productData, showsData, conversionsData, dailyTrends, compareDailyTrends } = useGoogleAdsData();
+  const { filters, updateFilter, batchUpdateFilters, fetchData, loading, error, channelTypes, kpis, compareKpis, campaignTypes, campaigns, adGroups, keywords, geoData, countryData, productData, showsData, dayData, conversionsData, dailyTrends, compareDailyTrends } = useGoogleAdsData();
 
   const [activeTab, setActiveTab] = useState('campaigntypes');
   const [kpiCollapsed, setKpiCollapsed] = useState(false);
   const [chartCollapsed, setChartCollapsed] = useState(false);
   const [chartActiveMetrics, setChartActiveMetrics] = useState(['cost', 'clicks', 'conversions']);
-  const [sort, setSort] = useState({ campaigntypes: { col: 'cost', dir: 'desc' }, campaigns: { col: 'cost', dir: 'desc' }, adgroups: { col: 'cost', dir: 'desc' }, keywords: { col: 'cost', dir: 'desc' }, /* searchterms: { col: 'cost', dir: 'desc' }, geo: { col: 'cost', dir: 'desc' }, */ country: { col: 'cost', dir: 'desc' }, product: { col: 'cost', dir: 'desc' }, shows: { col: 'cost', dir: 'desc' } /*, conversions: { col: 'conversions', dir: 'desc' } */ });
-  const [pg, setPg] = useState({ campaigntypes: 1, campaigns: 1, adgroups: 1, keywords: 1, /* searchterms: 1, geo: 1, */ country: 1, product: 1, shows: 1 /*, conversions: 1 */ });
+  const [sort, setSort] = useState({ campaigntypes: { col: 'cost', dir: 'desc' }, campaigns: { col: 'cost', dir: 'desc' }, adgroups: { col: 'cost', dir: 'desc' }, keywords: { col: 'cost', dir: 'desc' }, country: { col: 'cost', dir: 'desc' }, product: { col: 'cost', dir: 'desc' }, shows: { col: 'cost', dir: 'desc' }, day: { col: 'date', dir: 'asc' } });
+  const [pg, setPg] = useState({ campaigntypes: 1, campaigns: 1, adgroups: 1, keywords: 1, country: 1, product: 1, shows: 1, day: 1 });
   const [expanded, setExpanded] = useState({});
   const [matchFilter, setMatchFilter] = useState('');
   const [hiddenCols, setHiddenCols] = useState({});
@@ -193,7 +191,7 @@ export function GoogleAdsPage() {
     setExpanded((prev) => { const n = { ...prev }; if (n[key]) delete n[key]; else n[key] = true; return n; });
   }, []);
 
-  const handleApply = () => { setPg({ campaigntypes: 1, campaigns: 1, adgroups: 1, keywords: 1, /* searchterms: 1, geo: 1, */ country: 1, product: 1, shows: 1 /*, conversions: 1 */ }); setExpanded({}); fetchData(); };
+  const handleApply = () => { setPg({ campaigntypes: 1, campaigns: 1, adgroups: 1, keywords: 1, country: 1, product: 1, shows: 1, day: 1 }); setExpanded({}); fetchData(); };
 
   const handleDatePickerApply = useCallback(({ preset, dateFrom, dateTo, compareOn, compareFrom, compareTo }) => {
     batchUpdateFilters({
@@ -406,6 +404,29 @@ export function GoogleAdsPage() {
   const productCols = refDimCols('Product');
   const showsCols = refDimCols('Title');
 
+  /* ── Day Columns ── */
+  const formatDayDisplay = (dateStr) => {
+    if (!dateStr || typeof dateStr !== 'string') return dateStr || '';
+    const dateOnly = (dateStr.length >= 10 && dateStr[4] === '-' && dateStr[7] === '-') ? dateStr.slice(0, 10) : dateStr;
+    const parts = dateOnly.split('-');
+    if (parts.length < 3) return dateStr;
+    const [y, m, d] = parts.map(Number);
+    if (!y || !m || !d) return dateStr;
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${months[m - 1]} ${String(d).padStart(2, '0')}, ${y}`;
+  };
+  const dayCols = [
+    { col: 'date', label: 'Day', dim: true, cell: (r) => formatDayDisplay(r.date), total: () => 'Total' },
+    { col: 'impressions', label: 'Impr.', align: 'r', cell: (r) => fI(r.impressions), total: (t) => fI(t.impressions) },
+    { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => fI(t.clicks) },
+    { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => fP(t.ctr) },
+    { col: 'cpc', label: 'Avg CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => fU(t.cpc) },
+    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
+    { col: 'conversions', label: 'Conv.', align: 'r', cell: (r) => fI(r.conversions), total: (t) => fI(t.conversions) },
+    { col: 'conv_rate', label: 'Conv. Rate', align: 'r', cell: (r) => fP(r.conv_rate), total: (t) => t ? fP(t.conv_rate) : '' },
+    { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => fU(t.cpa) },
+  ];
+
   /* ── Conversions Columns ── */
   const conversionCols = [
     { col: 'campaign_name', label: 'Campaign', dim: true, clamp: true, cell: (r) => r.campaign_name, total: () => 'Total' },
@@ -420,8 +441,8 @@ export function GoogleAdsPage() {
   const filteredKeywords = matchFilter ? keywords.filter((k) => k.keyword_match_type === matchFilter) : keywords;
 
   /* ── CSV handler (exports what you see, including pivot aggregation) ── */
-  const dataMap = { campaigntypes: campaignTypes, campaigns: campaigns, adgroups: adGroups, keywords: filteredKeywords, /* geo: geoData, */ country: countryData, product: productData, shows: showsData /*, conversions: conversionsData */ };
-  const colMap = { campaigntypes: campaignTypeCols, campaigns: campaignCols, adgroups: adGroupCols, keywords: keywordCols, /* geo: geoCols, */ country: countryCols, product: productCols, shows: showsCols /*, conversions: conversionCols */ };
+  const dataMap = { campaigntypes: campaignTypes, campaigns: campaigns, adgroups: adGroups, keywords: filteredKeywords, country: countryData, product: productData, shows: showsData, day: dayData || [] };
+  const colMap = { campaigntypes: campaignTypeCols, campaigns: campaignCols, adgroups: adGroupCols, keywords: keywordCols, country: countryCols, product: productCols, shows: showsCols, day: dayCols };
 
   const handleCSV = () => {
     const rawData = dataMap[activeTab];
@@ -747,7 +768,7 @@ export function GoogleAdsPage() {
           <div className="gads-tabs-row">
             <div className="gads-tabs">
               {TABS.map((tab) => {
-                const countMap = { campaigntypes: campaignTypes.length, campaigns: campaigns.length, adgroups: adGroups.length, keywords: keywords.length, /* geo: geoData.length, */ country: countryData.length, product: productData.length, shows: showsData.length /*, conversions: conversionsData.length */ };
+                const countMap = { campaigntypes: campaignTypes.length, campaigns: campaigns.length, adgroups: adGroups.length, keywords: keywords.length, country: countryData.length, product: productData.length, shows: showsData.length, day: (dayData || []).length };
                 const count = countMap[tab.id];
                 return <button key={tab.id} type="button" className={`gads-tab ${activeTab === tab.id ? 'active' : ''}`} onClick={() => setActiveTab(tab.id)}>{tab.label}{count != null && !loading ? ` (${count})` : ''}</button>;
               })}
@@ -759,7 +780,7 @@ export function GoogleAdsPage() {
                   Columns
                 </button>
                 {colEditorOpen && (() => {
-                  const allCols = { campaigntypes: campaignTypeCols, campaigns: campaignCols, adgroups: adGroupCols, keywords: keywordCols, geo: geoCols, country: countryCols, product: productCols, shows: showsCols, conversions: conversionCols }[activeTab] || [];
+                  const allCols = { campaigntypes: campaignTypeCols, campaigns: campaignCols, adgroups: adGroupCols, keywords: keywordCols, country: countryCols, product: productCols, shows: showsCols, day: dayCols }[activeTab] || [];
                   return (
                     <div className="gads-col-dropdown">
                       <div className="gads-col-dropdown-header">Toggle Columns</div>
@@ -822,7 +843,7 @@ export function GoogleAdsPage() {
 
           {!loading && activeTab === 'shows' && renderTable('shows', showsData, showsCols, { rowKey: (r) => r.name })}
 
-          {/* {!loading && activeTab === 'conversions' && renderTable('conversions', conversionsData, conversionCols, { rowKey: (r) => r.campaign_id })} */}
+          {!loading && activeTab === 'day' && renderTable('day', dayData || [], dayCols, { rowKey: (r) => r.date })}
         </div>
       </div>
     </div>

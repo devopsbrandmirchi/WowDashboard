@@ -17,18 +17,25 @@ async function fetchAllRows(queryFactory) {
   return results;
 }
 
+function fmtLocal(d) {
+  if (!d) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function computeDateRange(preset, customFrom, customTo) {
   const today = new Date();
-  const fmt = (d) => d.toISOString().slice(0, 10);
   const daysAgo = (n) => { const d = new Date(today); d.setDate(d.getDate() - n); return d; };
   switch (preset) {
-    case 'today': return { from: fmt(today), to: fmt(today) };
-    case 'yesterday': return { from: fmt(daysAgo(1)), to: fmt(daysAgo(1)) };
-    case 'last7': return { from: fmt(daysAgo(6)), to: fmt(today) };
-    case 'last14': return { from: fmt(daysAgo(13)), to: fmt(today) };
-    case 'last30': return { from: fmt(daysAgo(29)), to: fmt(today) };
-    case 'this_month': { const f = new Date(today.getFullYear(), today.getMonth(), 1); return { from: fmt(f), to: fmt(today) }; }
-    case 'last_month': { const f = new Date(today.getFullYear(), today.getMonth() - 1, 1); const l = new Date(today.getFullYear(), today.getMonth(), 0); return { from: fmt(f), to: fmt(l) }; }
+    case 'today': return { from: fmtLocal(today), to: fmtLocal(today) };
+    case 'yesterday': return { from: fmtLocal(daysAgo(1)), to: fmtLocal(daysAgo(1)) };
+    case 'last7': return { from: fmtLocal(daysAgo(6)), to: fmtLocal(today) };
+    case 'last14': return { from: fmtLocal(daysAgo(13)), to: fmtLocal(today) };
+    case 'last30': return { from: fmtLocal(daysAgo(29)), to: fmtLocal(today) };
+    case 'this_month': { const f = new Date(today.getFullYear(), today.getMonth(), 1); return { from: fmtLocal(f), to: fmtLocal(today) }; }
+    case 'last_month': { const f = new Date(today.getFullYear(), today.getMonth() - 1, 1); const l = new Date(today.getFullYear(), today.getMonth(), 0); return { from: fmtLocal(f), to: fmtLocal(l) }; }
     case 'custom': return { from: customFrom || null, to: customTo || null };
     default: return { from: null, to: null };
   }
@@ -43,12 +50,19 @@ function computePreviousPeriod(fromStr, toStr) {
   prevTo.setDate(prevTo.getDate() - 1);
   const prevFrom = new Date(prevTo);
   prevFrom.setDate(prevFrom.getDate() - days + 1);
-  const fmt = (d) => d.toISOString().slice(0, 10);
-  return { from: fmt(prevFrom), to: fmt(prevTo) };
+  return { from: fmtLocal(prevFrom), to: fmtLocal(prevTo) };
 }
 
 function num(v) { return Number(v) || 0; }
 function costFromMicros(v) { return num(v) / 1e6; }
+
+function toDayKey(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'string' && v.length >= 10 && v[4] === '-' && v[7] === '-') return v.slice(0, 10);
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return null;
+  return fmtLocal(d);
+}
 
 function addMetrics(o) {
   o.ctr = o.impressions ? (o.clicks / o.impressions) * 100 : 0;
@@ -365,7 +379,7 @@ export function useGoogleAdsData() {
   const dailyTrends = useMemo(() => {
     const map = new Map();
     rawCampaigns.forEach((r) => {
-      const d = r.segment_date; if (!d) return;
+      const d = toDayKey(r.segment_date); if (!d) return;
       if (!map.has(d)) map.set(d, { date: d, cost: 0, clicks: 0, impressions: 0, conversions: 0 });
       const a = map.get(d);
       a.cost += costFromMicros(r.cost_micros); a.clicks += num(r.clicks); a.impressions += num(r.impressions); a.conversions += num(r.conversions);
@@ -399,7 +413,7 @@ export function useGoogleAdsData() {
     if (!rawCompareCampaigns.length) return [];
     const map = new Map();
     rawCompareCampaigns.forEach((r) => {
-      const d = r.segment_date; if (!d) return;
+      const d = toDayKey(r.segment_date); if (!d) return;
       if (!map.has(d)) map.set(d, { date: d, cost: 0, clicks: 0, impressions: 0, conversions: 0 });
       const a = map.get(d);
       a.cost += costFromMicros(r.cost_micros); a.clicks += num(r.clicks); a.impressions += num(r.impressions); a.conversions += num(r.conversions);
@@ -407,13 +421,27 @@ export function useGoogleAdsData() {
     return [...map.values()].map(addMetrics).sort((a, b) => a.date.localeCompare(b.date));
   }, [rawCompareCampaigns]);
 
+  const dayData = useMemo(() => {
+    return dailyTrends.map((d) => ({
+      date: d.date,
+      cost: d.cost,
+      clicks: d.clicks,
+      impressions: d.impressions,
+      conversions: d.conversions,
+      ctr: d.ctr,
+      cpc: d.cpc,
+      conv_rate: d.conv_rate,
+      cpa: d.cpa,
+    }));
+  }, [dailyTrends]);
+
   return {
     filters, updateFilter, batchUpdateFilters, fetchData,
     loading, error, customers, channelTypes,
     kpis, compareKpis, campaignTypes: campaignTypesAgg, campaigns: campaignsAgg,
     adGroups: adGroupsAgg, keywords: keywordsAgg,
     geoData: geoAgg, conversionsData: conversionsAgg, dailyTrends, compareDailyTrends,
-    countryData: countryAgg, productData: productAgg, showsData: showsAgg,
+    countryData: countryAgg, productData: productAgg, showsData: showsAgg, dayData,
     rowCounts: { campaigns: rawCampaigns.length, adGroups: rawAdGroups.length, keywords: rawKeywords.length },
   };
 }
