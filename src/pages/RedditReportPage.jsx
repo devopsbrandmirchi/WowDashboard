@@ -42,7 +42,7 @@ const KPI_CATALOG = [
   { key: 'cpa', label: 'CPA', fmt: fU, icon: '🏷', category: 'Conversions', inverse: true },
   { key: 'roas', label: 'ROAS', fmt: fR, icon: '🔥', category: 'Conversions', inverse: false },
 ];
-const KPI_DEFAULTS = ['cost', 'impressions', 'clicks', 'purchases', 'cpa', 'roas'];
+const KPI_DEFAULTS = ['cost', 'impressions', 'clicks', 'purchases', 'cpa', 'cpc'];
 
 function exportCSV(columns, rows, filename) {
   const header = columns.map((c) => `"${c.label}"`).join(',');

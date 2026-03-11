@@ -514,7 +514,7 @@ export function GoogleAdsPage() {
     { key: 'cpa',               label: 'CPA',          fmt: fU, icon: '🏷', category: 'Conversions', inverse: true },
     { key: 'roas',              label: 'ROAS',         fmt: fR, icon: '🔥', category: 'Conversions', inverse: false },
   ];
-  const KPI_DEFAULTS = ['cost', 'impressions', 'clicks', 'conversions', 'cpa', 'roas'];
+  const KPI_DEFAULTS = ['cost', 'impressions', 'clicks', 'conversions', 'cpa', 'cpc'];
 
   const [kpiSelected, setKpiSelected] = useState(() => {
     try {

@@ -132,7 +132,7 @@ const META_KPI_LABELS = [
   { key: 'clicks', label: 'Clicks', fmt: fI },
   { key: 'purchases', label: 'Conversions', fmt: fI },
   { key: 'cpa', label: 'CPA', fmt: fU },
-  { key: 'roas', label: 'ROAS', fmt: fR },
+  { key: 'cpc', label: 'Avg. CPC', fmt: fU },
 ];
 
 export function MetaReportPage() {
@@ -509,7 +509,7 @@ export function MetaReportPage() {
               <div className="rkpi-card"><div className="rkpi-header"><span className="rkpi-icon">👆</span><span className="rkpi-label">Clicks</span></div><div className="rkpi-value">{fI(kpis.clicks)}</div></div>
               <div className="rkpi-card"><div className="rkpi-header"><span className="rkpi-icon">🎯</span><span className="rkpi-label">Conversions</span></div><div className="rkpi-value">{fI(kpis.purchases)}</div></div>
               <div className="rkpi-card"><div className="rkpi-header"><span className="rkpi-icon">🏷</span><span className="rkpi-label">CPA</span></div><div className="rkpi-value">{fU(kpis.cpa)}</div></div>
-              <div className="rkpi-card"><div className="rkpi-header"><span className="rkpi-icon">🔥</span><span className="rkpi-label">ROAS</span></div><div className="rkpi-value">{fR(kpis.roas)}</div></div>
+              <div className="rkpi-card"><div className="rkpi-header"><span className="rkpi-icon">💵</span><span className="rkpi-label">Avg. CPC</span></div><div className="rkpi-value">{fU(kpis.cpc)}</div></div>
             </div>
           )}
         </div>
