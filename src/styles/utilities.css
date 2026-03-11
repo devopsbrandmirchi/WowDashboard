@@ -89,6 +89,24 @@ select:focus {
     background: var(--text-muted);
 }
 
+/* Hide vertical scrollbars in reporting pages */
+.page-section *::-webkit-scrollbar,
+.page-content *::-webkit-scrollbar,
+#meta-tab-content *::-webkit-scrollbar,
+#gads-tab-content *::-webkit-scrollbar,
+.gads-tabs-container *::-webkit-scrollbar,
+.gads-tabs-row *::-webkit-scrollbar,
+.table-wrapper::-webkit-scrollbar {
+    width: 0 !important;
+    height: 5px;
+}
+
+/* Only show horizontal scrollbars for table wrappers */
+.table-wrapper::-webkit-scrollbar {
+    width: 0 !important;
+    height: 5px !important;
+}
+
 /* Selection color */
 ::selection {
     background: var(--navy);
