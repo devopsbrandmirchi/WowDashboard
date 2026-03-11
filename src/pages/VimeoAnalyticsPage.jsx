@@ -12,9 +12,7 @@ const TABS = [
   { id: 'spt', label: 'Subscriptions + Trials' },
 ];
 
-function KpiCard({ label, value, prev, fmt = fI, inverse, colorValue }) {
-  const pct = prev != null && prev !== 0 ? ((value - prev) / Math.abs(prev)) * 100 : null;
-  const isGood = inverse ? (pct != null && pct <= 0) : (pct != null && pct >= 0);
+function KpiCard({ label, value, fmt = fI, colorValue }) {
   const valueGood = colorValue != null && colorValue === true ? (Number(value) >= 0) : null;
   const valueStyle = colorValue && valueGood !== null
     ? { color: valueGood ? '#0D7C36' : '#C41920' }
@@ -23,13 +21,6 @@ function KpiCard({ label, value, prev, fmt = fI, inverse, colorValue }) {
     <div className="rkpi-card" style={{ minWidth: 120 }}>
       <div className="rkpi-header"><span className="rkpi-label">{label}</span></div>
       <div className="rkpi-value" style={valueStyle}>{typeof fmt === 'function' ? fmt(value) : value}</div>
-      {pct != null && (
-        <div className={`kpi-compare ${isGood ? 'kpi-compare-good' : 'kpi-compare-bad'}`}>
-          <span className="kpi-prev">{fmt(prev)}</span>
-          <span className="kpi-compare-arrow">{pct >= 0 ? '▲' : '▼'}</span>
-          <span className="kpi-compare-pct">{Math.abs(pct).toFixed(1)}%</span>
-        </div>
-      )}
     </div>
   );
 }
@@ -55,7 +46,7 @@ function monthInRange(monthKey, dateFrom, dateTo) {
 export function VimeoAnalyticsPage() {
   const {
     dateFrom, dateTo, compareFrom, compareTo, updateDateRange,
-    loading, error, fetchData, kpis, compareKpis, monthlySummary, countryByMonth, monthByCountry, dailyData, dailyCompareData,
+    loading, error, fetchData, kpis, monthlySummary, countryByMonth, monthByCountry, dailyData, dailyCompareData,
   } = useVimeoAnalyticsData();
 
   const [activeTab, setActiveTab] = useState('subscriptions');
@@ -484,7 +475,7 @@ export function VimeoAnalyticsPage() {
               <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, background: '#1AB7EA', color: 'white', borderRadius: 8, fontSize: 16, fontWeight: 700 }}>V</span>
               Vimeo Subscription Analytics
             </h2>
-            <p>Aggregated subscription metrics (December 2025)</p>
+            <p>Aggregated subscription metrics (February 2026)</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <DateRangePicker
@@ -532,10 +523,10 @@ export function VimeoAnalyticsPage() {
             {activeTab === 'subscriptions' && (
               <>
                 <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-                  <KpiCard label="Gained" value={kpis.gained} prev={compareKpis?.gained} />
-                  <KpiCard label="Lost" value={kpis.lost} prev={compareKpis?.lost} inverse />
-                  <KpiCard label="Net Growth" value={kpis.netGrowth} prev={compareKpis?.netGrowth} fmt={(v) => (v >= 0 ? '+' : '') + fI(v)} colorValue />
-                  <KpiCard label="Active (EOM)" value={kpis.active} prev={compareKpis?.active} />
+                  <KpiCard label="Gained" value={kpis.gained} />
+                  <KpiCard label="Lost" value={kpis.lost} />
+                  <KpiCard label="Net Growth" value={kpis.netGrowth} fmt={(v) => (v >= 0 ? '+' : '') + fI(v)} colorValue />
+                  <KpiCard label="Active (EOM)" value={kpis.active} />
                 </div>
                 <div className="panel" style={{ marginBottom: 24 }}>
                   <div className="panel-header"><h3>Daily Trends</h3></div>
@@ -554,10 +545,10 @@ export function VimeoAnalyticsPage() {
             {activeTab === 'trials' && (
               <>
                 <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-                  <KpiCard label="Trials Gained" value={kpis.trials} prev={compareKpis?.trials} />
-                  <KpiCard label="Trials Lost" value={kpis.trialsLost} prev={compareKpis?.trialsLost} inverse />
-                  <KpiCard label="Trials Net" value={kpis.trialsNet} prev={compareKpis?.trialsNet} fmt={(v) => (v >= 0 ? '+' : '') + fI(v)} colorValue />
-                  <KpiCard label="Trials Active (EOM)" value={kpis.trialsActive} prev={compareKpis?.trialsActive} />
+                  <KpiCard label="Trials Gained" value={kpis.trials} />
+                  <KpiCard label="Trials Lost" value={kpis.trialsLost} />
+                  <KpiCard label="Trials Net" value={kpis.trialsNet} fmt={(v) => (v >= 0 ? '+' : '') + fI(v)} colorValue />
+                  <KpiCard label="Trials Active (EOM)" value={kpis.trialsActive} />
                 </div>
                 <div className="panel" style={{ marginBottom: 24 }}>
                   <div className="panel-header"><h3>Daily Trends</h3></div>
@@ -576,10 +567,10 @@ export function VimeoAnalyticsPage() {
             {activeTab === 'spt' && (
               <>
                 <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-                  <KpiCard label="S+T Gained" value={kpis.plusGained} prev={compareKpis?.plusGained} />
-                  <KpiCard label="S+T Lost" value={kpis.plusLost} prev={compareKpis?.plusLost} inverse />
-                  <KpiCard label="S+T Net Growth" value={kpis.plusNet} prev={compareKpis?.plusNet} fmt={(v) => (v >= 0 ? '+' : '') + fI(v)} colorValue />
-                  <KpiCard label="S+T Active (EOM)" value={kpis.sptActive} prev={compareKpis?.sptActive} />
+                  <KpiCard label="S+T Gained" value={kpis.plusGained} />
+                  <KpiCard label="S+T Lost" value={kpis.plusLost} />
+                  <KpiCard label="S+T Net Growth" value={kpis.plusNet} fmt={(v) => (v >= 0 ? '+' : '') + fI(v)} colorValue />
+                  <KpiCard label="S+T Active (EOM)" value={kpis.sptActive} />
                 </div>
                 <div className="panel" style={{ marginBottom: 24 }}>
                   <div className="panel-header"><h3>Daily Trends</h3></div>
