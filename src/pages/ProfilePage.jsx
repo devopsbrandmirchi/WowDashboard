@@ -12,6 +12,12 @@ export function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
+  // Change password
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState(null);
+  const [passwordError, setPasswordError] = useState(null);
 
   const loadProfile = async () => {
     if (!user?.id) return null;
@@ -92,6 +98,36 @@ export function ProfilePage() {
     setEditing(false);
   };
 
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setPasswordError(null);
+    setPasswordMessage(null);
+    if (!newPassword.trim()) {
+      setPasswordError('Please enter a new password.');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setPasswordError('Password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match.');
+      return;
+    }
+    setPasswordSaving(true);
+    try {
+      const { error: updateErr } = await supabase.auth.updateUser({ password: newPassword });
+      if (updateErr) throw updateErr;
+      setPasswordMessage('Password updated successfully.');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      setPasswordError(err?.message ?? 'Failed to update password');
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
   return (
     <div className="page-section active" id="page-profile">
       <div className="page-content">
@@ -103,6 +139,7 @@ export function ProfilePage() {
         {loading ? (
           <p className="help-text">Loading profile…</p>
         ) : (
+          <>
           <div className="settings-section profile-card">
             <div className="profile-header">
               <div className="profile-avatar">
@@ -172,6 +209,47 @@ export function ProfilePage() {
               </>
             )}
           </div>
+
+          <div className="settings-section profile-card" style={{ marginTop: '24px' }}>
+            <h3 style={{ marginBottom: '12px' }}>Change password</h3>
+            <form className="profile-edit-form" onSubmit={handleChangePassword}>
+              {passwordError && <p className="form-error">{passwordError}</p>}
+              {passwordMessage && <p className="form-success">{passwordMessage}</p>}
+              <div className="form-group">
+                <label htmlFor="profile-new-password">New password</label>
+                <input
+                  id="profile-new-password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter new password"
+                  autoComplete="new-password"
+                  minLength={6}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="profile-confirm-password">Confirm new password</label>
+                <input
+                  id="profile-confirm-password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Confirm new password"
+                  autoComplete="new-password"
+                  minLength={6}
+                />
+              </div>
+              <p className="help-text" style={{ marginBottom: '12px' }}>
+                Use at least 6 characters.
+              </p>
+              <div className="profile-edit-actions">
+                <button type="submit" className="btn btn-primary" disabled={passwordSaving}>
+                  {passwordSaving ? 'Updating…' : 'Update password'}
+                </button>
+              </div>
+            </form>
+          </div>
+          </>
         )}
       </div>
     </div>
