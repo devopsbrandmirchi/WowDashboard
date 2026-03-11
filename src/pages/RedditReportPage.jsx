@@ -426,7 +426,7 @@ export function RedditReportPage() {
         <div className="page-title-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h2 style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--navy)' }}>
-              <img src="/dist/assets/reddit_logo_56px56p.png" alt="Reddit Ads" style={{ width: '56px', height: '56px', display: 'block', borderRadius: '8px' }} />
+              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36 }}>{REDDIT_LOGO}</span>
               Reddit Data Metrics
             </h2>
             <p style={{ marginTop: 4, fontSize: 13, color: 'var(--text-muted)' }}>

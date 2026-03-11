@@ -308,8 +308,7 @@ export function CombinedReportPage() {
     return out.sort((a, b) => (b.cost || 0) - (a.cost || 0));
   }, [productData, platformFilter]);
 
-  // const showPlatformColumn = platformFilter === 'all' && (viewTab === 'country' || viewTab === 'show' || viewTab === 'product');
-  const showPlatformColumn = false; // Commented out: Platform column removed from all tabs except Platform tab
+  const showPlatformColumn = platformFilter === 'all' && (viewTab === 'country' || viewTab === 'show' || viewTab === 'product');
 
   const handleCSV = useCallback(() => {
     if (viewTab === 'combined') {
@@ -324,7 +323,7 @@ export function CombinedReportPage() {
       exportCSV(cols, summaryRows, 'combined-report-platform.csv');
     } else if (viewTab === 'country') {
       const cols = [
-        // ...(showPlatformColumn ? [{ label: 'Platform', cell: (r) => r.platformLabel }] : []), // Commented out: Platform column removed
+        ...(showPlatformColumn ? [{ label: 'Platform', cell: (r) => r.platformLabel }] : []),
         { label: 'Country', cell: (r) => r.name },
         { label: 'Cost', cell: (r) => fU(r.cost) },
         { label: 'Impressions', cell: (r) => fI(r.impressions) },
@@ -335,7 +334,7 @@ export function CombinedReportPage() {
       exportCSV(cols, countryRows, 'combined-report-country.csv');
     } else if (viewTab === 'show') {
       const cols = [
-        // ...(showPlatformColumn ? [{ label: 'Platform', cell: (r) => r.platformLabel }] : []), // Commented out: Platform column removed
+        ...(showPlatformColumn ? [{ label: 'Platform', cell: (r) => r.platformLabel }] : []),
         { label: 'Show', cell: (r) => r.name },
         { label: 'Cost', cell: (r) => fU(r.cost) },
         { label: 'Impressions', cell: (r) => fI(r.impressions) },
@@ -346,7 +345,7 @@ export function CombinedReportPage() {
       exportCSV(cols, showRows, 'combined-report-show.csv');
     } else {
       const cols = [
-        // ...(showPlatformColumn ? [{ label: 'Platform', cell: (r) => r.platformLabel }] : []), // Commented out: Platform column removed
+        ...(showPlatformColumn ? [{ label: 'Platform', cell: (r) => r.platformLabel }] : []),
         { label: 'Product', cell: (r) => r.name },
         { label: 'Cost', cell: (r) => fU(r.cost) },
         { label: 'Impressions', cell: (r) => fI(r.impressions) },
@@ -778,7 +777,7 @@ export function CombinedReportPage() {
                   <table className="data-table gads-table">
                     <thead>
                       <tr>
-                        {/* {showPlatformColumn && <th>Platform</th>} */} {/* Commented out: Platform column removed */}
+                        {showPlatformColumn && <th>Platform</th>}
                         <th>Country</th>
                         <th className="text-right">Cost</th>
                         <th className="text-right">Impressions</th>
@@ -790,14 +789,14 @@ export function CombinedReportPage() {
                     <tbody>
                       {countryRows.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="gads-empty-cell">
+                          <td colSpan={showPlatformColumn ? 7 : 6} className="gads-empty-cell">
                             No country data for the selected platform(s).
                           </td>
                         </tr>
                       )}
                       {countryRows.map((r, i) => (
                         <tr key={`${r.platform}-${r.name}-${i}`}>
-                          {/* {showPlatformColumn && (
+                          {showPlatformColumn && (
                             <td>
                               <span
                                 style={{
@@ -812,7 +811,7 @@ export function CombinedReportPage() {
                               />
                               {r.platformLabel}
                             </td>
-                          )} */} {/* Commented out: Platform column removed */}
+                          )}
                           <td><strong>{r.name}</strong></td>
                           <td className="text-right">{fU(r.cost)}</td>
                           <td className="text-right">{fI(r.impressions)}</td>
@@ -843,7 +842,7 @@ export function CombinedReportPage() {
                   <table className="data-table gads-table">
                     <thead>
                       <tr>
-                        {/* {showPlatformColumn && <th>Platform</th>} */} {/* Commented out: Platform column removed */}
+                        {showPlatformColumn && <th>Platform</th>}
                         <th>Show</th>
                         <th className="text-right">Cost</th>
                         <th className="text-right">Impressions</th>
@@ -855,14 +854,14 @@ export function CombinedReportPage() {
                     <tbody>
                       {showRows.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="gads-empty-cell">
+                          <td colSpan={showPlatformColumn ? 7 : 6} className="gads-empty-cell">
                             No show data for the selected platform(s).
                           </td>
                         </tr>
                       )}
                       {showRows.map((r, i) => (
                         <tr key={`${r.platform}-${r.name}-${i}`}>
-                          {/* {showPlatformColumn && (
+                          {showPlatformColumn && (
                             <td>
                               <span
                                 style={{
@@ -877,7 +876,7 @@ export function CombinedReportPage() {
                               />
                               {r.platformLabel}
                             </td>
-                          )} */} {/* Commented out: Platform column removed */}
+                          )}
                           <td><strong>{r.name}</strong></td>
                           <td className="text-right">{fU(r.cost)}</td>
                           <td className="text-right">{fI(r.impressions)}</td>
@@ -908,7 +907,7 @@ export function CombinedReportPage() {
                   <table className="data-table gads-table">
                     <thead>
                       <tr>
-                        {/* {showPlatformColumn && <th>Platform</th>} */} {/* Commented out: Platform column removed */}
+                        {showPlatformColumn && <th>Platform</th>}
                         <th>Product</th>
                         <th className="text-right">Cost</th>
                         <th className="text-right">Impressions</th>
@@ -920,14 +919,14 @@ export function CombinedReportPage() {
                     <tbody>
                       {productRows.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="gads-empty-cell">
+                          <td colSpan={showPlatformColumn ? 7 : 6} className="gads-empty-cell">
                             No product data for the selected platform(s).
                           </td>
                         </tr>
                       )}
                       {productRows.map((r, i) => (
                         <tr key={`${r.platform}-${r.name}-${i}`}>
-                          {/* {showPlatformColumn && (
+                          {showPlatformColumn && (
                             <td>
                               <span
                                 style={{
@@ -942,7 +941,7 @@ export function CombinedReportPage() {
                               />
                               {r.platformLabel}
                             </td>
-                          )} */} {/* Commented out: Platform column removed */}
+                          )}
                           <td><strong>{r.name}</strong></td>
                           <td className="text-right">{fU(r.cost)}</td>
                           <td className="text-right">{fI(r.impressions)}</td>

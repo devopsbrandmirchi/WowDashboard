@@ -412,7 +412,9 @@ export function TiktokReportPage() {
         <div className="page-title-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <img src="/dist/assets/tiktok_logo_56px56p.jpg.jpeg" alt="TikTok Ads" style={{ width: '56px', height: '56px', display: 'block', borderRadius: '8px' }} />
+              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, background: '#000', color: '#25F4EE', borderRadius: 8, fontSize: 16, fontWeight: 700 }}>
+                <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-.88-.13 2.89 2.89 0 01-2-2.74 2.89 2.89 0 012.88-2.89c.3 0 .59.04.86.12V9.01a6.38 6.38 0 00-.86-.06 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.34-6.34V9.48a8.24 8.24 0 004.76 1.5V7.53a4.83 4.83 0 01-1-.84z" fill="currentColor"/></svg>
+              </span>
               TikTok Ads
             </h2>
             <p>TikTok campaign performance</p>

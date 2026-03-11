@@ -410,7 +410,9 @@ export function MetaReportPage() {
         <div className="page-title-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <img src="/dist/assets/meta_logo_56px56.png" alt="Meta Ads" style={{ width: '56px', height: '56px', display: 'block', borderRadius: '8px' }} />
+              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, background: '#1877F2', color: 'white', borderRadius: 8, fontSize: 16, fontWeight: 700 }}>
+                <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2.04c-5.5 0-10 4.49-10 10.02 0 5 3.66 9.15 8.44 9.9v-7H7.9v-2.9h2.54V9.85c0-2.52 1.49-3.93 3.78-3.93 1.09 0 2.24.2 2.24.2v2.47h-1.26c-1.24 0-1.63.78-1.63 1.57v1.88h2.78l-.45 2.9h-2.33v7a10 10 0 008.44-9.9c0-5.53-4.5-10.02-10-10.02z" fill="currentColor"/></svg>
+              </span>
               Meta Performance
             </h2>
           </div>

@@ -2062,13 +2062,13 @@ body {
 }
 .gads-tabs-pill .gads-tabs-row {
     border-bottom: none;
-    padding: 10px 12px;
+    padding: 10px 12px 0;
     gap: 8px;
     align-items: center;
 }
 .gads-tabs-pill .gads-tabs {
     gap: 6px;
-    padding: 0 6px;
+    padding: 0 6px 8px;
     overflow-x: auto;
     flex-wrap: nowrap;
     min-width: 0;
@@ -2113,10 +2113,6 @@ body {
 .gads-tabs-pill .gads-tabs-actions {
     border-left: 1px solid #e0e0e4;
     flex-shrink: 0;
-    position: sticky;
-    right: 0;
-    background: #f5f5f7;
-    z-index: 10;
 }
 
 /* Tab Content Container */
