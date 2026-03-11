@@ -90,13 +90,13 @@ export function UsersPage() {
             <h2>Users</h2>
             <p>View and manage user accounts (from profiles)</p>
           </div>
-          <button
+          {/* <button
             type="button"
             className="btn-add-user"
             onClick={() => setAddModalOpen(true)}
           >
             + Add user
-          </button>
+          </button> */}
         </div>
 
         {message && (
