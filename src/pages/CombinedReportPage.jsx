@@ -261,7 +261,8 @@ export function CombinedReportPage() {
   const [chartActiveMetrics, setChartActiveMetrics] = useState(['cost', 'clicks', 'conversions']);
   const [chartType, setChartType] = useState('line'); // 'line' | 'bar'
   const [viewTab, setViewTab] = useState('combined');
-  const [platformFilter, setPlatformFilter] = useState('all');
+  // const [platformFilter, setPlatformFilter] = useState('all'); // Removed - always showing all platforms
+  const platformFilter = 'all'; // Always show all platforms
   const [colEditorOpen, setColEditorOpen] = useState(false);
   const colEditorRef = useRef(null);
 
@@ -285,7 +286,24 @@ export function CombinedReportPage() {
       const arr = countryData[pid] || [];
       arr.forEach((item) => out.push(normalizeDimRow(item, pid, platformLabels[pid])));
     });
-    return out.sort((a, b) => (b.cost || 0) - (a.cost || 0));
+    // Aggregate duplicate countries into one row
+    const aggregated = new Map();
+    out.forEach((row) => {
+      const key = row.name.toLowerCase().trim();
+      if (aggregated.has(key)) {
+        const existing = aggregated.get(key);
+        existing.cost += row.cost || 0;
+        existing.impressions += row.impressions || 0;
+        existing.clicks += row.clicks || 0;
+        existing.conversions += row.conversions || 0;
+        existing.revenue += row.revenue || 0;
+        existing.cpa = existing.conversions ? existing.cost / existing.conversions : 0;
+        existing.roas = calculateRoas(existing.cost, existing.revenue);
+      } else {
+        aggregated.set(key, { ...row });
+      }
+    });
+    return Array.from(aggregated.values()).sort((a, b) => (b.cost || 0) - (a.cost || 0));
   }, [countryData, platformFilter]);
 
   const showRows = useMemo(() => {
@@ -295,7 +313,24 @@ export function CombinedReportPage() {
       const arr = showData[pid] || [];
       arr.forEach((item) => out.push(normalizeDimRow(item, pid, platformLabels[pid])));
     });
-    return out.sort((a, b) => (b.cost || 0) - (a.cost || 0));
+    // Aggregate duplicate shows/titles into one row
+    const aggregated = new Map();
+    out.forEach((row) => {
+      const key = row.name.toLowerCase().trim();
+      if (aggregated.has(key)) {
+        const existing = aggregated.get(key);
+        existing.cost += row.cost || 0;
+        existing.impressions += row.impressions || 0;
+        existing.clicks += row.clicks || 0;
+        existing.conversions += row.conversions || 0;
+        existing.revenue += row.revenue || 0;
+        existing.cpa = existing.conversions ? existing.cost / existing.conversions : 0;
+        existing.roas = calculateRoas(existing.cost, existing.revenue);
+      } else {
+        aggregated.set(key, { ...row });
+      }
+    });
+    return Array.from(aggregated.values()).sort((a, b) => (b.cost || 0) - (a.cost || 0));
   }, [showData, platformFilter]);
 
   const productRows = useMemo(() => {
@@ -305,10 +340,28 @@ export function CombinedReportPage() {
       const arr = productData[pid] || [];
       arr.forEach((item) => out.push(normalizeDimRow(item, pid, platformLabels[pid])));
     });
-    return out.sort((a, b) => (b.cost || 0) - (a.cost || 0));
+    // Aggregate duplicate products into one row
+    const aggregated = new Map();
+    out.forEach((row) => {
+      const key = row.name.toLowerCase().trim();
+      if (aggregated.has(key)) {
+        const existing = aggregated.get(key);
+        existing.cost += row.cost || 0;
+        existing.impressions += row.impressions || 0;
+        existing.clicks += row.clicks || 0;
+        existing.conversions += row.conversions || 0;
+        existing.revenue += row.revenue || 0;
+        existing.cpa = existing.conversions ? existing.cost / existing.conversions : 0;
+        existing.roas = calculateRoas(existing.cost, existing.revenue);
+      } else {
+        aggregated.set(key, { ...row });
+      }
+    });
+    return Array.from(aggregated.values()).sort((a, b) => (b.cost || 0) - (a.cost || 0));
   }, [productData, platformFilter]);
 
-  const showPlatformColumn = platformFilter === 'all' && (viewTab === 'country' || viewTab === 'show' || viewTab === 'product');
+  // const showPlatformColumn = platformFilter === 'all' && (viewTab === 'country' || viewTab === 'show' || viewTab === 'product');
+  const showPlatformColumn = false; // Commented out - Platform column disabled
 
   const handleCSV = useCallback(() => {
     if (viewTab === 'combined') {
@@ -666,28 +719,7 @@ export function CombinedReportPage() {
               })}
             </div>
             <div className="gads-tabs-actions">
-              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', marginRight: 6 }}>Platform:</span>
-              <select
-                value={platformFilter}
-                onChange={(e) => setPlatformFilter(e.target.value)}
-                style={{
-                  padding: '7px 12px',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: 'var(--text-muted)',
-                  background: 'var(--bg-secondary)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-sm)',
-                  minWidth: 140,
-                  cursor: 'pointer',
-                }}
-              >
-                {PLATFORM_OPTIONS.map((opt) => (
-                  <option key={opt.id} value={opt.id}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+              {/* Platform dropdown removed - always showing all platforms */}
               <div style={{ position: 'relative' }} ref={colEditorRef}>
                 <button type="button" className={`gads-col-btn${colEditorOpen ? ' active' : ''}`} title="Show/hide columns" onClick={() => setColEditorOpen((v) => !v)}>
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ verticalAlign: '-2px', marginRight: 4 }}><rect x="1" y="1" width="4" height="5" rx="1" stroke="currentColor" strokeWidth="1.2"/><rect x="1" y="8" width="4" height="5" rx="1" stroke="currentColor" strokeWidth="1.2"/><rect x="7" y="1" width="6" height="5" rx="1" stroke="currentColor" strokeWidth="1.2"/><rect x="7" y="8" width="6" height="5" rx="1" stroke="currentColor" strokeWidth="1.2"/></svg>
@@ -777,7 +809,7 @@ export function CombinedReportPage() {
                   <table className="data-table gads-table">
                     <thead>
                       <tr>
-                        {showPlatformColumn && <th>Platform</th>}
+                        {/* {showPlatformColumn && <th>Platform</th>} */} {/* Commented out - Platform column disabled */}
                         <th>Country</th>
                         <th className="text-right">Cost</th>
                         <th className="text-right">Impressions</th>
@@ -789,14 +821,14 @@ export function CombinedReportPage() {
                     <tbody>
                       {countryRows.length === 0 && (
                         <tr>
-                          <td colSpan={showPlatformColumn ? 7 : 6} className="gads-empty-cell">
+                          <td colSpan={6} className="gads-empty-cell">
                             No country data for the selected platform(s).
                           </td>
                         </tr>
                       )}
                       {countryRows.map((r, i) => (
-                        <tr key={`${r.platform}-${r.name}-${i}`}>
-                          {showPlatformColumn && (
+                        <tr key={`${r.name}-${i}`}>
+                          {/* {showPlatformColumn && (
                             <td>
                               <span
                                 style={{
@@ -811,7 +843,7 @@ export function CombinedReportPage() {
                               />
                               {r.platformLabel}
                             </td>
-                          )}
+                          )} */} {/* Commented out - Platform column disabled */}
                           <td><strong>{r.name}</strong></td>
                           <td className="text-right">{fU(r.cost)}</td>
                           <td className="text-right">{fI(r.impressions)}</td>
@@ -842,8 +874,8 @@ export function CombinedReportPage() {
                   <table className="data-table gads-table">
                     <thead>
                       <tr>
-                        {showPlatformColumn && <th>Platform</th>}
-                        <th>Show</th>
+                        {/* {showPlatformColumn && <th>Platform</th>} */} {/* Commented out - Platform column disabled */}
+                        <th>Title</th>
                         <th className="text-right">Cost</th>
                         <th className="text-right">Impressions</th>
                         <th className="text-right">Clicks</th>
@@ -854,14 +886,14 @@ export function CombinedReportPage() {
                     <tbody>
                       {showRows.length === 0 && (
                         <tr>
-                          <td colSpan={showPlatformColumn ? 7 : 6} className="gads-empty-cell">
+                          <td colSpan={6} className="gads-empty-cell">
                             No show data for the selected platform(s).
                           </td>
                         </tr>
                       )}
                       {showRows.map((r, i) => (
-                        <tr key={`${r.platform}-${r.name}-${i}`}>
-                          {showPlatformColumn && (
+                        <tr key={`${r.name}-${i}`}>
+                          {/* {showPlatformColumn && (
                             <td>
                               <span
                                 style={{
@@ -876,7 +908,7 @@ export function CombinedReportPage() {
                               />
                               {r.platformLabel}
                             </td>
-                          )}
+                          )} */} {/* Commented out - Platform column disabled */}
                           <td><strong>{r.name}</strong></td>
                           <td className="text-right">{fU(r.cost)}</td>
                           <td className="text-right">{fI(r.impressions)}</td>
@@ -907,7 +939,7 @@ export function CombinedReportPage() {
                   <table className="data-table gads-table">
                     <thead>
                       <tr>
-                        {showPlatformColumn && <th>Platform</th>}
+                        {/* {showPlatformColumn && <th>Platform</th>} */} {/* Commented out - Platform column disabled */}
                         <th>Product</th>
                         <th className="text-right">Cost</th>
                         <th className="text-right">Impressions</th>
@@ -919,14 +951,14 @@ export function CombinedReportPage() {
                     <tbody>
                       {productRows.length === 0 && (
                         <tr>
-                          <td colSpan={showPlatformColumn ? 7 : 6} className="gads-empty-cell">
+                          <td colSpan={6} className="gads-empty-cell">
                             No product data for the selected platform(s).
                           </td>
                         </tr>
                       )}
                       {productRows.map((r, i) => (
-                        <tr key={`${r.platform}-${r.name}-${i}`}>
-                          {showPlatformColumn && (
+                        <tr key={`${r.name}-${i}`}>
+                          {/* {showPlatformColumn && (
                             <td>
                               <span
                                 style={{
@@ -941,7 +973,7 @@ export function CombinedReportPage() {
                               />
                               {r.platformLabel}
                             </td>
-                          )}
+                          )} */} {/* Commented out - Platform column disabled */}
                           <td><strong>{r.name}</strong></td>
                           <td className="text-right">{fU(r.cost)}</td>
                           <td className="text-right">{fI(r.impressions)}</td>

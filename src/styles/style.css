@@ -1984,7 +1984,7 @@ body {
 .gads-col-btn.active {
     color: var(--navy);
     border-color: var(--navy);
-    background: var(--navy-bg);
+    background: var(--bg-secondary);
 }
 
 .gads-tab {
@@ -2306,7 +2306,7 @@ body {
 .gads-col-btn:hover {
     color: var(--navy);
     border-color: var(--navy);
-    background: var(--navy-bg);
+    background: var(--bg-secondary);
 }
 
 /* Column panel as fixed overlay */
