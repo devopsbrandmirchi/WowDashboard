@@ -4,6 +4,18 @@ This document describes how to implement role-based access control (RBAC) for Wo
 
 ---
 
+## Roles model
+
+| # | Display name   | DB `roles.name` | Description |
+|---|----------------|-----------------|-------------|
+| 1 | Super Admin    | `super_admin`   | Full access + `admin:manage_roles` / `admin:manage_users` |
+| 2 | Admin          | `admin`         | Full access to all sidebar pages and report tabs |
+| 3 | Employee       | `employee`      | Limited; assign only the permission keys they need |
+
+Frontend: `src/constants/roles.js` — use `ROLES`, `ROLE_IDS`, `getRoleBySlug()`, `isRoleAtLeast()`.
+
+---
+
 ## Permission Keys
 
 | Type | Format | Example |
@@ -19,6 +31,7 @@ This document describes how to implement role-based access control (RBAC) for Wo
 - `sidebar:ga4`, `sidebar:email`, `sidebar:ghl`, `sidebar:ott`
 - `sidebar:seo`, `sidebar:geo`, `sidebar:creatives`, `sidebar:events`
 - `sidebar:settings`
+- `sidebar:roles-permissions` (Roles & Permissions under System)
 
 ### Google Ads Report Tabs
 - `report:google-ads:campaigntypes`
@@ -36,7 +49,17 @@ This document describes how to implement role-based access control (RBAC) for Wo
 
 ## Supabase Changes
 
-### 1. Run this SQL in Supabase SQL Editor
+### 0. One-shot run (recommended)
+
+Open **Supabase Dashboard → SQL Editor → New query**, paste the contents of:
+
+**`supabase/run_all_migrations.sql`**
+
+Click **Run**. That creates `roles`, `role_permissions`, `profiles`, RLS, trigger, seeds roles/permissions, and attempts the Super Admin user. If step 7 errors on hosted projects, run `npm run seed:super-admin` after adding `SUPABASE_SERVICE_ROLE_KEY` to `.env`.
+
+---
+
+### 1. Run this SQL in Supabase SQL Editor (same schema, manual blocks)
 
 ```sql
 -- Roles table
@@ -97,40 +120,131 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- Seed default roles
+-- Seed default roles (Super Admin, Admin, Employee)
+-- Must match src/constants/roles.js ROLE_IDS
 INSERT INTO public.roles (id, name, description) VALUES
-  ('00000000-0000-0000-0000-000000000001', 'admin', 'Full access to all pages and features'),
-  ('00000000-0000-0000-0000-000000000002', 'analyst', 'Access to reports and dashboards'),
-  ('00000000-0000-0000-0000-000000000003', 'client', 'Limited access - configurable per client')
-ON CONFLICT DO NOTHING;
+  ('00000000-0000-0000-0000-000000000001', 'super_admin', 'Full access plus role and user management'),
+  ('00000000-0000-0000-0000-000000000002', 'admin', 'Full access to all pages and report tabs'),
+  ('00000000-0000-0000-0000-000000000003', 'employee', 'Limited access – configurable per permission set')
+ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description;
 
--- Grant admin all sidebar permissions (example - add more as needed)
+-- Or run: supabase/migrations/20250310000000_roles_super_admin_admin_employee.sql
+
+-- Grant Super Admin + Admin all sidebar permissions
 INSERT INTO public.role_permissions (role_id, permission_key)
-SELECT id, 'sidebar:' || unnest(ARRAY['dashboard','combined-reporting','google-ads','meta-ads','bing-ads','tiktok-ads','reddit-ads','amazon-ads','dsp','dating-apps','ctv','ga4','email','ghl','ott','seo','geo','creatives','events','settings'])
-FROM public.roles WHERE name = 'admin'
-ON CONFLICT DO NOTHING;
+SELECT r.id, 'sidebar:' || p
+FROM public.roles r, unnest(ARRAY['dashboard','combined-reporting','google-ads','meta-ads','bing-ads','tiktok-ads','reddit-ads','amazon-ads','dsp','dating-apps','ctv','ga4','email','ghl','ott','seo','geo','creatives','events','settings']) AS p
+WHERE r.name IN ('super_admin', 'admin')
+ON CONFLICT (role_id, permission_key) DO NOTHING;
 
--- Grant admin all Google Ads report tabs
+-- Grant Super Admin + Admin all Google Ads report tabs
 INSERT INTO public.role_permissions (role_id, permission_key)
-SELECT id, 'report:google-ads:' || unnest(ARRAY['campaigntypes','campaigns','adgroups','keywords','searchterms','geo','country','product','shows','conversions'])
-FROM public.roles WHERE name = 'admin'
-ON CONFLICT DO NOTHING;
+SELECT r.id, 'report:google-ads:' || t
+FROM public.roles r, unnest(ARRAY['campaigntypes','campaigns','adgroups','keywords','searchterms','geo','country','product','shows','conversions']) AS t
+WHERE r.name IN ('super_admin', 'admin')
+ON CONFLICT (role_id, permission_key) DO NOTHING;
 
--- Example: client role sees only Campaign Types in Google Ads
+-- Super Admin only: manage roles/users (optional permission keys)
+INSERT INTO public.role_permissions (role_id, permission_key)
+SELECT id, k FROM public.roles, unnest(ARRAY['admin:manage_roles','admin:manage_users']) AS k
+WHERE name = 'super_admin'
+ON CONFLICT (role_id, permission_key) DO NOTHING;
+
+-- Employee: example limited set (customize as needed)
 INSERT INTO public.role_permissions (role_id, permission_key)
 SELECT id, unnest(ARRAY['sidebar:dashboard','sidebar:google-ads','report:google-ads:campaigntypes'])
-FROM public.roles WHERE name = 'client'
-ON CONFLICT DO NOTHING;
+FROM public.roles WHERE name = 'employee'
+ON CONFLICT (role_id, permission_key) DO NOTHING;
 ```
 
-### 2. Assign role to a user
+### 2. Default Super Admin user (seed)
+
+App user data lives in **`public.profiles`** (linked to `auth.users` by `profiles.id`). There is no separate custom user table required; `profiles` + `roles` is the user model.
+
+Default seed (run after `roles` + `profiles` exist):
+
+| Field    | Value              |
+|----------|--------------------|
+| Name     | Super Admin        |
+| Email    | `supper@admin.com` |
+| Password | `Admin!@#$1234`    |
+| Role     | `super_admin`      |
+
+**Option A – SQL migration** (local/self-hosted; may fail on hosted Supabase if `auth` writes are restricted):
+
+- Run `supabase/migrations/20250310000001_seed_super_admin_user.sql` in SQL Editor.
+
+**Option B – Admin API script** (recommended for hosted):
+
+```bash
+# .env: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (never commit service key)
+npm run seed:super-admin
+```
+
+Script: `scripts/seed-super-admin.mjs` — creates the user and upserts profile (role_id or text `role`) to Super Admin.
+
+**"User already exists" but no row in `profiles`?**
+
+The user is stored in **Authentication** (`auth.users`), not in the `profiles` table. The script creates the profile row when it runs; if that step fails (e.g. `profiles_role_check`), the user can sign in but won’t appear in the Data Editor → `profiles` until the profile is created. Fix the constraint (below), then run the seed again to create the profile row.
+
+**If you see this when running the seed:**
+
+```
+User already exists: supper@admin.com
+Could not update profile: new row for relation "profiles" violates check constraint "profiles_role_check"
+```
+
+Your `profiles.role` column only allows certain values (e.g. `viewer`). Do one of the following:
+
+1. **Allow `super_admin` in the DB** — In Supabase **SQL Editor**, run:
+
+```sql
+ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_role_check;
+ALTER TABLE public.profiles
+  ADD CONSTRAINT profiles_role_check
+  CHECK (role IS NULL OR role IN (
+    'viewer', 'editor', 'admin', 'super_admin', 'employee'
+  ));
+```
+
+Then run `npm run seed:super-admin` again.
+2. **Or set role manually** — In **Table Editor → profiles**, find the row for `supper@admin.com`, edit the `role` cell to `super_admin` (if your constraint already allows it) or to an allowed value like `admin` until you run the SQL in step 1.
+
+**Option C – Dashboard**
+
+Authentication → Users → Add user → same email/password → then:
+
+```sql
+UPDATE public.profiles SET role_id = '00000000-0000-0000-0000-000000000001', full_name = 'Super Admin'
+WHERE id = (SELECT id FROM auth.users WHERE email = 'supper@admin.com');
+```
+
+**Production:** change the password after first login; do not rely on the default password.
+
+---
+
+### 3. Assign role to a user
 
 ```sql
 -- After user signs up, assign role (e.g. via Supabase Dashboard or admin UI)
+-- Employee example
 UPDATE public.profiles SET role_id = '00000000-0000-0000-0000-000000000003' WHERE id = 'user-uuid-here';
+-- Admin: ...000002 | Super Admin: ...000001
 ```
 
-### 3. API to fetch user permissions
+### 4. Users page: let super_admin list all profiles (fix RLS recursion)
+
+If the **Users** page shows *"infinite recursion detected in policy for relation profiles"*, a policy is reading from `profiles` to decide who can read `profiles`. Fix it by using a **SECURITY DEFINER** function so the role check does not go through RLS.
+
+Run in **Supabase → SQL Editor** the contents of:
+
+**`supabase/rls_super_admin_list_profiles.sql`**
+
+That **drops** the recursive-style policy and adds **`list_profiles_for_admin()`** — a `SECURITY DEFINER` RPC that reads `profiles` inside the function only (no RLS recursion). The Users page calls this RPC first; only callers whose `profiles.role` is `super_admin` get data (others get “not allowed”).
+
+---
+
+### 5. API to fetch user permissions
 
 Create a Supabase function or use a view. For simplicity, the frontend will fetch:
 
@@ -174,16 +288,19 @@ $$ LANGUAGE sql SECURITY DEFINER STABLE;
 - Before rendering `CurrentPage`, check `hasPermission('sidebar:' + currentPage)`
 - If no permission, redirect to first allowed page or show "Access denied"
 
-### 5. GoogleAdsPage.jsx
+### 6. GoogleAdsPage.jsx
 
 - Filter `TABS` by `hasPermission('report:google-ads:' + tab.id)`
 - If `activeTab` is not allowed, switch to first allowed tab
 - If no tabs allowed, hide the report or show a message
 
-### 6. Admin UI (optional, later)
+### 7. Super Admin: assign which role accesses which model
 
-- Page to manage roles and permissions
-- Assign roles to users
+On **Roles & Permissions** (System), Super Admin can assign permissions per role: select role, tick sidebar pages / report tabs / admin keys, then **Save**. Run in SQL Editor: (1) **`supabase/create_roles_and_role_permissions.sql`** to create `roles` and `role_permissions` and seed them; (2) **`supabase/rpc_role_permissions.sql`** to add `get_role_permissions(role_id)` and `set_role_permissions(role_id, permission_keys)` (only Super Admin can set).
+
+### 8. Admin UI (optional, later)
+
+- Assign roles to users (e.g. on Users page)
 
 ---
 

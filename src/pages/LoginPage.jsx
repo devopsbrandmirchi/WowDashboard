@@ -24,7 +24,7 @@ export function LoginPage({ onSwitchToSignup }) {
   return (
     <div className="login-page">
       <div className="login-card">
-        <h1>WowDashboard</h1>
+        <h1>Digital Analytics Dashboard</h1>
         <p className="login-subtitle">Sign in to your reporting suite</p>
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="settings-form-group">

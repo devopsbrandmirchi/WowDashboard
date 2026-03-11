@@ -1,5 +1,6 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
+import { useUserPermissions } from '../hooks/useUserPermissions';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Executive Dashboard', icon: '📊', section: 'Overview' },
@@ -28,6 +29,8 @@ const NAV_ITEMS = [
   { id: 'subscriptions-analytics', label: 'Subscription Analytics', icon: '📈', section: 'Subscriptions' },
   { id: 'subscriptions-subscribers', label: 'Subscriber Intelligence', icon: '👥', section: 'Subscriptions' },
   { id: 'settings',  label: 'White-Label Settings',  icon: '⚙️', section: 'System' },
+  { id: 'roles-permissions', label: 'Roles & Permissions', icon: '🔐', section: 'System' },
+  { id: 'users', label: 'Users', icon: '👤', section: 'System' },
 ];
 
 function groupBySection(items) {
@@ -52,12 +55,15 @@ const PAGE_ROUTES = {
   'tiktok-ads': '/tiktok-ads',
   'reddit-ads': '/reddit-ads',
   'settings': '/settings',
+  'roles-permissions': '/settings/roles-permissions',
+  'users': '/settings/users',
 };
 
 export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { currentPage, showPage, sidebarOpen, sidebarCollapsed, branding } = useApp();
+  const { canAccessSidebar } = useUserPermissions();
 
   const sidebarClass = ['sidebar', sidebarOpen && 'open', sidebarCollapsed && 'collapsed'].filter(Boolean).join(' ');
 
@@ -70,11 +76,14 @@ export function Sidebar() {
         </div>
       </div>
 
-      {Array.from(sections.entries()).map(([sectionLabel, items]) => (
+      {Array.from(sections.entries()).map(([sectionLabel, items]) => {
+        const visibleItems = items.filter((item) => canAccessSidebar(item.id));
+        if (visibleItems.length === 0) return null;
+        return (
         <div key={sectionLabel} className="sidebar-section">
           <div className="sidebar-section-label">{sectionLabel}</div>
           <ul className="sidebar-nav">
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <li key={item.id}>
                 <a
                   href={PAGE_ROUTES[item.id] || '#'}
@@ -97,7 +106,8 @@ export function Sidebar() {
             ))}
           </ul>
         </div>
-      ))}
+        );
+      })}
     </aside>
   );
 }

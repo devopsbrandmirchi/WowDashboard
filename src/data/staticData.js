@@ -105,6 +105,9 @@ export const PAGE_TITLES = {
   'tiktok-ads': 'TikTok Ads Performance',
   'reddit-ads': 'Reddit Ads Performance',
   settings: 'White-Label Settings',
+  'roles-permissions': 'Roles & Permissions',
+  users: 'Users',
+  profile: 'Profile',
 };
 
 export const CLIENTS = [

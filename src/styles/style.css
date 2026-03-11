@@ -235,8 +235,10 @@ body {
 
 .sidebar.collapsed { width: 62px; }
 .sidebar.collapsed .brand-info,
-.sidebar.collapsed .sidebar-section-label,
-.sidebar.collapsed .sidebar-footer { display: none; }
+.sidebar.collapsed .sidebar-section-label { display: none; }
+.sidebar.collapsed .sidebar-footer .sidebar-nav a { font-size: 0; justify-content: center; padding: 10px 0; }
+.sidebar.collapsed .sidebar-footer .sidebar-nav .nav-icon { font-size: 16px; margin-right: 0; }
+.sidebar.collapsed .sidebar-footer .sidebar-nav a::after { content: attr(data-tooltip); }
 .sidebar.collapsed .brand-logo-text .brand-digital { display: none; }
 .sidebar.collapsed .brand-logo-text .brand-chipper { font-size: 18px; letter-spacing: -0.5px; }
 .sidebar.collapsed .sidebar-section { padding: 6px 6px 2px; }
@@ -428,6 +430,136 @@ body {
     border-top: 1px solid rgba(255,255,255,0.08);
 }
 
+.sidebar-footer .sidebar-nav a {
+    border-radius: var(--radius-sm);
+}
+
+/* Profile page */
+.profile-card.settings-section {
+    max-width: 560px;
+    padding: 24px;
+}
+
+.profile-header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 24px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.profile-avatar {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.profile-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.profile-avatar-initial {
+    font-size: 28px;
+    font-weight: 700;
+    color: #fff;
+}
+
+.profile-title h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--navy);
+}
+
+.profile-title .help-text {
+    margin: 4px 0 0;
+    color: var(--text-muted);
+}
+
+.profile-details {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 10px 24px;
+    margin: 0;
+}
+
+.profile-details dt {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.profile-details dd {
+    margin: 0;
+    font-size: 14px;
+    color: var(--navy);
+}
+
+.profile-edit-form {
+    margin-top: 8px;
+}
+
+.profile-edit-form .form-group {
+    margin-bottom: 16px;
+}
+
+.profile-edit-form .form-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 6px;
+}
+
+.profile-edit-form .form-group input {
+    width: 100%;
+    max-width: 320px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-family: var(--font-family);
+    color: var(--navy);
+    background: var(--bg);
+}
+
+.profile-edit-form .form-group input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.profile-edit-form .form-error {
+    color: var(--danger, #dc3545);
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+
+.profile-edit-form .form-success,
+.profile-card .form-success {
+    color: var(--success, #28a745);
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+
+.profile-edit-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
 .client-selector {
     width: 100%;
     padding: 8px 10px;
@@ -565,6 +697,127 @@ body {
 .header-filters select:focus {
     border-color: var(--navy);
     box-shadow: 0 0 0 2px var(--navy-bg);
+}
+
+/* Header user menu (name, email, dropdown) */
+.header-user-menu {
+    position: relative;
+}
+
+.header-user-trigger {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    color: var(--text-primary);
+    font: inherit;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.header-user-trigger:hover {
+    border-color: var(--navy);
+}
+
+.header-user-trigger[aria-expanded="true"] {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(var(--primary-rgb, 220, 53, 69), 0.2);
+}
+
+.header-user-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.header-user-info {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+    min-width: 0;
+}
+
+.header-user-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--navy);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 160px;
+}
+
+.header-user-email {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 160px;
+}
+
+.header-user-chevron {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    transition: transform 0.2s;
+}
+
+.header-user-trigger[aria-expanded="true"] .header-user-chevron {
+    transform: rotate(180deg);
+}
+
+.header-user-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 180px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    z-index: 1000;
+    padding: 6px 0;
+}
+
+.header-dropdown-item {
+    display: block;
+    width: 100%;
+    padding: 10px 16px;
+    border: none;
+    background: none;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--navy);
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.header-dropdown-item:hover {
+    background: var(--navy-bg, rgba(0, 0, 0, 0.04));
+}
+
+.header-dropdown-logout {
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+    padding-top: 10px;
+    color: var(--primary);
+}
+
+.header-dropdown-logout:hover {
+    background: rgba(var(--primary-rgb, 220, 53, 69), 0.08);
 }
 
 /* ============================================
@@ -1040,6 +1293,366 @@ body {
     font-size: 12px;
     font-weight: 600;
     color: var(--text-secondary);
+}
+
+/* ============================================
+   ROLES & PERMISSIONS — Assign permissions UI
+   ============================================ */
+.permissions-assign {
+    max-width: 960px;
+}
+
+.permissions-assign .role-selector-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 16px 20px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    margin-bottom: 24px;
+}
+
+.permissions-assign .role-selector-bar label {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.permissions-assign .role-selector-bar select {
+    min-width: 200px;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-weight: 500;
+    background: var(--bg);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.permissions-assign .role-selector-bar select:focus {
+    outline: none;
+    border-color: var(--navy);
+    box-shadow: 0 0 0 3px var(--navy-bg);
+}
+
+.permissions-assign .role-selector-bar .editing-badge {
+    font-size: 13px;
+    color: var(--text-muted);
+    padding: 6px 12px;
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+
+.permissions-assign .permission-group-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-xs);
+}
+
+.permissions-assign .permission-group-card:hover {
+    border-color: var(--border-light);
+    box-shadow: var(--shadow-sm);
+}
+
+.permissions-assign .permission-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.permissions-assign .permission-group-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--navy);
+    margin: 0;
+}
+
+.permissions-assign .permission-group-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.permissions-assign .permission-group-actions button {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.permissions-assign .permission-group-actions button:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-color: var(--navy);
+}
+
+.permissions-assign .permission-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 10px 24px;
+}
+
+.permissions-assign .permission-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    min-height: 36px;
+}
+
+.permissions-assign .permission-item input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: var(--primary);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.permissions-assign .permission-item label {
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+    margin: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.permissions-assign .permission-item label .perm-label {
+    font-weight: 500;
+}
+
+.permissions-assign .permission-item label .perm-key {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.permissions-assign .permission-save-bar {
+    margin-top: 28px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.permissions-assign .permission-save-bar .btn-save-permissions {
+    padding: 12px 24px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: var(--radius-md);
+    border: none;
+    background: var(--primary);
+    color: var(--text-white);
+    cursor: pointer;
+    transition: background 0.15s, transform 0.02s;
+    box-shadow: var(--shadow-sm);
+}
+
+.permissions-assign .permission-save-bar .btn-save-permissions:hover:not(:disabled) {
+    background: var(--primary-dark);
+}
+
+.permissions-assign .permission-save-bar .btn-save-permissions:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.permissions-assign .permission-save-bar .save-hint {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+/* ============================================
+   USERS PAGE — Add / Edit / Deactivate
+   ============================================ */
+.users-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 640px;
+}
+
+.users-table th,
+.users-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.users-table th {
+    font-weight: 600;
+    color: var(--navy);
+}
+
+.users-row-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.btn-add-user {
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: var(--radius-md);
+    border: none;
+    background: var(--primary);
+    color: var(--text-white);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.btn-add-user:hover {
+    background: var(--primary-dark);
+}
+
+.btn-edit-user {
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--navy);
+    background: var(--bg);
+    color: var(--navy);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.btn-edit-user:hover {
+    background: var(--navy-bg);
+}
+
+.btn-delete-user,
+.btn-delete-confirm {
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--danger);
+    background: var(--bg);
+    color: var(--danger);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.btn-delete-user:hover,
+.btn-delete-confirm:hover {
+    background: var(--danger-bg);
+}
+
+.btn-reactivate-user {
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--accent);
+    background: var(--bg);
+    color: var(--accent);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.btn-reactivate-user:hover {
+    background: var(--accent-bg);
+}
+
+/* Modal */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(26, 31, 113, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.modal-card {
+    background: var(--bg);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    max-width: 440px;
+    width: 100%;
+    box-shadow: var(--shadow-xl);
+    border: 1px solid var(--border);
+}
+
+.modal-card h3 {
+    margin: 0 0 16px 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--navy);
+}
+
+.modal-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+
+.btn-close-modal {
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.btn-close-modal:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.btn-save-user {
+    padding: 8px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: var(--primary);
+    color: var(--text-white);
+    cursor: pointer;
+}
+
+.btn-save-user:hover:not(:disabled) {
+    background: var(--primary-dark);
+}
+
+.btn-save-user:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.users-modal .settings-form-group input,
+.users-modal .settings-form-group select {
+    width: 100%;
+    max-width: none;
 }
 
 /* ============================================

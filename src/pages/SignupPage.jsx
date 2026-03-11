@@ -31,7 +31,7 @@ export function SignupPage({ onSwitchToLogin }) {
     return (
       <div className="login-page">
         <div className="login-card">
-          <h1>WowDashboard</h1>
+          <h1>Digital Analytics Dashboard</h1>
           <p className="login-subtitle">Check your email</p>
           <p className="signup-success-msg">
             We&apos;ve sent a confirmation link to <strong>{email}</strong>.
@@ -54,7 +54,7 @@ export function SignupPage({ onSwitchToLogin }) {
   return (
     <div className="login-page">
       <div className="login-card">
-        <h1>WowDashboard</h1>
+        <h1>Digital Analytics Dashboard</h1>
         <p className="login-subtitle">Create your account</p>
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="settings-form-group">

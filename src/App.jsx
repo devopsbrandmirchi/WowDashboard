@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { useApp } from './context/AppContext';
+import { useUserPermissions } from './hooks/useUserPermissions';
 import { LoginPage } from './pages/LoginPage';
 import { SignupPage } from './pages/SignupPage';
 import { Sidebar } from './components/Sidebar';
@@ -14,6 +15,9 @@ import { TiktokReportPage } from './pages/TiktokReportPage';
 import { RedditReportPage } from './pages/RedditReportPage';
 import { CombinedReportPage } from './pages/CombinedReportPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { RolesPermissionsPage } from './pages/RolesPermissionsPage';
+import { UsersPage } from './pages/UsersPage';
+import { ProfilePage } from './pages/ProfilePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { VimeoAnalyticsPage } from './pages/VimeoAnalyticsPage';
 import { SubscriberIntelligencePage } from './pages/SubscriberIntelligencePage';
@@ -33,6 +37,9 @@ const PATH_TO_PAGE = {
   '/tiktok-ads': 'tiktok-ads',
   '/reddit-ads': 'reddit-ads',
   '/settings': 'settings',
+  '/settings/roles-permissions': 'roles-permissions',
+  '/settings/users': 'users',
+  '/profile': 'profile',
 };
 
 function CurrentPage({ forcePage }) {
@@ -53,6 +60,9 @@ function CurrentPage({ forcePage }) {
   if (page === 'reddit-ads') return <RedditReportPage />;
   if (page === 'combined-reporting') return <CombinedReportPage />;
   if (page === 'settings') return <SettingsPage />;
+  if (page === 'roles-permissions') return <RolesPermissionsPage />;
+  if (page === 'users') return <UsersPage />;
+  if (page === 'profile') return <ProfilePage />;
   if (page === 'subscriptions-analytics') return <VimeoAnalyticsPage />;
   if (page === 'subscriptions-subscribers') return <SubscriberIntelligencePage />;
 
@@ -65,6 +75,22 @@ function CurrentPage({ forcePage }) {
 }
 
 function AppContent({ forcePage }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { canAccessSidebar, loading: permissionsLoading } = useUserPermissions();
+
+  useEffect(() => {
+    if (permissionsLoading) return;
+    const path = location.pathname;
+    if (path === '/settings/users' && !canAccessSidebar('users')) {
+      navigate('/', { replace: true });
+    } else if (path === '/settings/roles-permissions' && !canAccessSidebar('roles-permissions')) {
+      navigate('/', { replace: true });
+    } else if (path === '/settings' && !canAccessSidebar('settings')) {
+      navigate('/', { replace: true });
+    }
+  }, [location.pathname, canAccessSidebar, navigate, permissionsLoading]);
+
   return (
     <div className="app-layout">
       <Sidebar />
@@ -114,6 +140,9 @@ export default function App() {
       <Routes>
         <Route path="/subscriptions/analytics" element={<AppContent forcePage="subscriptions-analytics" />} />
         <Route path="/subscriptions/subscribers" element={<AppContent forcePage="subscriptions-subscribers" />} />
+        <Route path="/settings/roles-permissions" element={<AppContent forcePage="roles-permissions" />} />
+        <Route path="/settings/users" element={<AppContent forcePage="users" />} />
+        <Route path="/settings" element={<AppContent forcePage="settings" />} />
         <Route path="*" element={<AppContent />} />
       </Routes>
     </>
