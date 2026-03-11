@@ -22,19 +22,27 @@ async function fetchAllRows(queryFactory) {
   return results;
 }
 
+function fmtLocal(d) {
+  if (!d) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function computeDateRange(preset, customFrom, customTo) {
   const today = new Date();
-  const fmt = (d) => d.toISOString().slice(0, 10);
   const daysAgo = (n) => { const d = new Date(today); d.setDate(d.getDate() - n); return d; };
   switch (preset) {
-    case 'today': return { from: fmt(today), to: fmt(today) };
-    case 'yesterday': return { from: fmt(daysAgo(1)), to: fmt(daysAgo(1)) };
-    case 'last7': return { from: fmt(daysAgo(6)), to: fmt(today) };
-    case 'last14': return { from: fmt(daysAgo(13)), to: fmt(today) };
-    case 'last30': return { from: fmt(daysAgo(29)), to: fmt(today) };
-    case 'this_month': { const f = new Date(today.getFullYear(), today.getMonth(), 1); return { from: fmt(f), to: fmt(today) }; }
-    case 'last_month': { const f = new Date(today.getFullYear(), today.getMonth() - 1, 1); const l = new Date(today.getFullYear(), today.getMonth(), 0); return { from: fmt(f), to: fmt(l) }; }
+    case 'today': return { from: fmtLocal(today), to: fmtLocal(today) };
+    case 'yesterday': return { from: fmtLocal(daysAgo(1)), to: fmtLocal(daysAgo(1)) };
+    case 'last7': return { from: fmtLocal(daysAgo(6)), to: fmtLocal(today) };
+    case 'last14': return { from: fmtLocal(daysAgo(13)), to: fmtLocal(today) };
+    case 'last30': return { from: fmtLocal(daysAgo(29)), to: fmtLocal(today) };
+    case 'this_month': { const f = new Date(today.getFullYear(), today.getMonth(), 1); return { from: fmtLocal(f), to: fmtLocal(today) }; }
+    case 'last_month': { const f = new Date(today.getFullYear(), today.getMonth() - 1, 1); const l = new Date(today.getFullYear(), today.getMonth(), 0); return { from: fmtLocal(f), to: fmtLocal(l) }; }
     case 'custom': return { from: customFrom || null, to: customTo || null };
+    case '2025': return { from: '2025-01-01', to: '2025-12-31' };
     default: return { from: null, to: null };
   }
 }
@@ -46,7 +54,10 @@ function toDayKey(v) {
   if (typeof v === 'string' && v.length >= 10 && v[4] === '-' && v[7] === '-') return v.slice(0, 10);
   const d = new Date(v);
   if (isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function calendarDays(from, to) {
@@ -136,11 +147,10 @@ export function useTiktokReportData() {
       let { from, to } = computeDateRange(f.datePreset, f.dateFrom, f.dateTo);
       if (!from || !to) {
         const today = new Date();
-        const fmt = (d) => d.toISOString().slice(0, 10);
-        to = fmt(today);
+        to = fmtLocal(today);
         const d = new Date(today);
         d.setDate(d.getDate() - 30);
-        from = fmt(d);
+        from = fmtLocal(d);
       }
       setDateRange({ from, to });
 
@@ -178,7 +188,7 @@ export function useTiktokReportData() {
     }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData, filters.dateFrom, filters.dateTo, filters.datePreset]);
 
   const campaignRefMap = useMemo(() => {
     const m = new Map();

@@ -8,7 +8,11 @@ function getRowDate(r) {
   if (v == null || v === '') return null;
   if (typeof v === 'string' && v.length >= 10 && v[4] === '-' && v[7] === '-') return v.slice(0, 10);
   const d = new Date(v);
-  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+  if (isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 async function fetchAllRows(queryFactory) {
@@ -25,28 +29,47 @@ async function fetchAllRows(queryFactory) {
   return results;
 }
 
+function fmtLocal(d) {
+  if (!d) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function computeDateRange(preset, customFrom, customTo) {
   const today = new Date();
-  const fmt = (d) => d.toISOString().slice(0, 10);
   const daysAgo = (n) => { const d = new Date(today); d.setDate(d.getDate() - n); return d; };
   switch (preset) {
-    case 'today': return { from: fmt(today), to: fmt(today) };
-    case 'yesterday': return { from: fmt(daysAgo(1)), to: fmt(daysAgo(1)) };
-    case 'last7': return { from: fmt(daysAgo(6)), to: fmt(today) };
-    case 'last14': return { from: fmt(daysAgo(13)), to: fmt(today) };
-    case 'last30': return { from: fmt(daysAgo(29)), to: fmt(today) };
-    case 'this_month': return { from: fmt(new Date(today.getFullYear(), today.getMonth(), 1)), to: fmt(today) };
+    case 'today': return { from: fmtLocal(today), to: fmtLocal(today) };
+    case 'yesterday': return { from: fmtLocal(daysAgo(1)), to: fmtLocal(daysAgo(1)) };
+    case 'last7': return { from: fmtLocal(daysAgo(6)), to: fmtLocal(today) };
+    case 'last14': return { from: fmtLocal(daysAgo(13)), to: fmtLocal(today) };
+    case 'last30': return { from: fmtLocal(daysAgo(29)), to: fmtLocal(today) };
+    case 'this_month': return { from: fmtLocal(new Date(today.getFullYear(), today.getMonth(), 1)), to: fmtLocal(today) };
     case 'last_month': {
       const f = new Date(today.getFullYear(), today.getMonth() - 1, 1);
       const l = new Date(today.getFullYear(), today.getMonth(), 0);
-      return { from: fmt(f), to: fmt(l) };
+      return { from: fmtLocal(f), to: fmtLocal(l) };
     }
     case 'custom': return { from: customFrom || null, to: customTo || null };
+    case '2025': return { from: '2025-01-01', to: '2025-12-31' };
     default: return { from: null, to: null };
   }
 }
 
 function num(v) { return Number(v) || 0; }
+
+function toDayKey(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'string' && v.length >= 10 && v[4] === '-' && v[7] === '-') return v.slice(0, 10);
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 function addMetrics(o) {
   const cost = o.cost ?? 0;
@@ -66,7 +89,7 @@ function normalizeCampaignRow(r) {
   const purchaseClick = num(r.purchase_click ?? r.total_purchase_click);
   const purchaseView = num(r.purchase_view ?? r.total_purchase_view);
   const purchases = purchaseClick + purchaseView;
-  const day = getRowDate(r) ?? r.campaign_date ?? r.day ?? r.date;
+  const day = getRowDate(r) ?? toDayKey(r.campaign_date ?? r.day ?? r.date) ?? null;
   const impressions = num(r.impressions ?? r.total_impressions ?? r.impression);
   const clicks = num(r.clicks ?? r.total_clicks);
   return {
@@ -101,7 +124,7 @@ function normalizeMetricRow(r, nameKey = 'name') {
     clicks: num(r.clicks),
     cost,
     purchases,
-    day: getRowDate(r) ?? r.campaign_date ?? r.day ?? r.date,
+    day: getRowDate(r) ?? toDayKey(r.campaign_date ?? r.day ?? r.date) ?? null,
   };
 }
 
@@ -111,7 +134,12 @@ function calendarDays(from, to) {
   const start = new Date(from + 'T00:00:00');
   const end = new Date(to + 'T00:00:00');
   const d = new Date(start);
-  const fmt = (date) => date.toISOString().slice(0, 10);
+  const fmt = (date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
   while (d <= end) { out.push(fmt(d)); d.setDate(d.getDate() + 1); }
   return out;
 }
@@ -145,10 +173,10 @@ export function useRedditReportData() {
       let { from, to } = computeDateRange(f.datePreset, f.dateFrom, f.dateTo);
       if (!from || !to) {
         const today = new Date();
-        to = today.toISOString().slice(0, 10);
+        to = fmtLocal(today);
         const d = new Date(today);
         d.setDate(d.getDate() - 30);
-        from = d.toISOString().slice(0, 10);
+        from = fmtLocal(d);
       }
       setDateRange({ from, to });
 
@@ -185,7 +213,9 @@ export function useRedditReportData() {
     }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData, filters.dateFrom, filters.dateTo, filters.datePreset]);
 
   const campaignRefMap = useMemo(() => {
     const m = new Map();
@@ -302,7 +332,7 @@ export function useRedditReportData() {
   const days = useMemo(() => {
     const dayMap = new Map();
     rawCampaigns.forEach((r) => {
-      const dkey = r.day || 'Undefined';
+      const dkey = toDayKey(r.day) || 'Undefined';
       if (!dayMap.has(dkey)) dayMap.set(dkey, { key: dkey, name: dkey, impressions: 0, clicks: 0, cost: 0, purchases: 0 });
       const a = dayMap.get(dkey);
       a.impressions += r.impressions;
