@@ -44,7 +44,7 @@ const TABS = [
   { id: 'adsets', label: 'Ad Sets', title: 'AD SETS STATISTICS', searchPlaceholder: 'Search by Ad Set name...', nameColLabel: 'Ad Set Name', totalLabel: (n) => `All Ad Sets (${n})` },
   { id: 'country', label: 'Country', title: 'COUNTRY STATISTICS', searchPlaceholder: 'Search by Country...', nameColLabel: 'Country', totalLabel: (n) => `All Countries (${n})` },
   { id: 'product', label: 'Product', title: 'PRODUCT STATISTICS', searchPlaceholder: 'Search by Product...', nameColLabel: 'Product', totalLabel: (n) => `All Products (${n})` },
-  { id: 'shows', label: 'Show', title: 'SHOW STATISTICS', searchPlaceholder: 'Search by Show...', nameColLabel: 'Show', totalLabel: (n) => `All Shows (${n})` },
+  { id: 'shows', label: 'Titles', title: 'TITLES STATISTICS', searchPlaceholder: 'Search by Title...', nameColLabel: 'Title', totalLabel: (n) => `All Titles (${n})` },
   { id: 'placements', label: 'Placements', title: 'PLACEMENTS STATISTICS', searchPlaceholder: 'Search by Placement...', nameColLabel: 'Placement', totalLabel: (n) => `All Placements (${n})` },
   { id: 'day', label: 'Day', title: 'DAY STATISTICS', searchPlaceholder: 'Search by Day...', nameColLabel: 'Day', totalLabel: (n) => `All Days (${n})` },
   { id: 'ads', label: 'Ads', title: 'ADS STATISTICS', searchPlaceholder: 'Search by Ad name...', nameColLabel: 'Ad Name', totalLabel: (n) => `All Ads (${n})` },
@@ -559,6 +559,7 @@ export function MetaReportPage() {
                 );
               })}
             </div>
+            <div className="gads-tabs-spacer" />
             <div className="gads-tabs-actions">
               <div style={{ position: 'relative' }} ref={colEditorRef}>
                 <button type="button" className={`gads-col-btn${colEditorOpen ? ' active' : ''}`} title="Show/hide columns" onClick={() => setColEditorOpen((v) => !v)}>

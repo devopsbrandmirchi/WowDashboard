@@ -17,7 +17,7 @@ const fR = (n) => Number(n || 0).toFixed(2) + 'x';
 const VIEW_TABS = [
   { id: 'combined', label: 'Platform' },
   { id: 'country', label: 'Country' },
-  { id: 'show', label: 'Shows' },
+  { id: 'show', label: 'Titles' },
   { id: 'product', label: 'Product' },
 ];
 
@@ -335,7 +335,7 @@ export function CombinedReportPage() {
     } else if (viewTab === 'show') {
       const cols = [
         ...(showPlatformColumn ? [{ label: 'Platform', cell: (r) => r.platformLabel }] : []),
-        { label: 'Show', cell: (r) => r.name },
+        { label: 'Title', cell: (r) => r.name },
         { label: 'Cost', cell: (r) => fU(r.cost) },
         { label: 'Impressions', cell: (r) => fI(r.impressions) },
         { label: 'Clicks', cell: (r) => fI(r.clicks) },

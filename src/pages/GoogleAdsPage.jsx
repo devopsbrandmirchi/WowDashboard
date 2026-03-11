@@ -22,7 +22,7 @@ const TABS = [
   // { id: 'geo', label: 'Geo' },
   { id: 'country', label: 'Country' },
   { id: 'product', label: 'Product' },
-  { id: 'shows', label: 'Shows' },
+  { id: 'shows', label: 'Titles' },
   // { id: 'conversions', label: 'Conversions' },
 ];
 
@@ -404,7 +404,7 @@ export function GoogleAdsPage() {
   ];
   const countryCols = refDimCols('Country');
   const productCols = refDimCols('Product');
-  const showsCols = refDimCols('Show');
+  const showsCols = refDimCols('Title');
 
   /* ── Conversions Columns ── */
   const conversionCols = [

@@ -19,7 +19,7 @@ const TABS = [
   { id: 'placements', label: 'Placements', nameColLabel: 'Placement', totalLabel: (n) => `All Placements (${n})` },
   { id: 'country', label: 'Country', nameColLabel: 'Country', totalLabel: (n) => `All Countries (${n})` },
   { id: 'product', label: 'Product', nameColLabel: 'Product', totalLabel: (n) => `All Products (${n})` },
-  { id: 'shows', label: 'Shows', nameColLabel: 'Show', totalLabel: (n) => `All Shows (${n})` },
+  { id: 'shows', label: 'Titles', nameColLabel: 'Title', totalLabel: (n) => `All Titles (${n})` },
   { id: 'day', label: 'Day', nameColLabel: 'Day', totalLabel: (n) => `All Days (${n})` },
 ];
 
@@ -557,6 +557,7 @@ export function TiktokReportPage() {
                 </button>
               ))}
             </div>
+            <div className="gads-tabs-spacer" />
             <div className="gads-tabs-actions">
               <div style={{ position: 'relative' }} ref={colEditorRef}>
                 <button type="button" className={`gads-col-btn${colEditorOpen ? ' active' : ''}`} title="Show/hide columns" onClick={() => setColEditorOpen((v) => !v)}>

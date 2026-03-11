@@ -18,7 +18,7 @@ const TABS = [
   { id: 'placements', label: 'Placements', nameColLabel: 'Placement', totalLabel: (n) => `All Placements (${n})`, sectionTitle: 'PLACEMENTS STATISTICS' },
   { id: 'country', label: 'Country', nameColLabel: 'Country', totalLabel: (n) => `All Countries (${n})`, sectionTitle: 'COUNTRY STATISTICS' },
   { id: 'product', label: 'Product', nameColLabel: 'Product', totalLabel: (n) => `All Products (${n})`, sectionTitle: 'PRODUCT STATISTICS' },
-  { id: 'shows', label: 'Show', nameColLabel: 'Show', totalLabel: (n) => `All Shows (${n})`, sectionTitle: 'SHOW STATISTICS' },
+  { id: 'shows', label: 'Titles', nameColLabel: 'Title', totalLabel: (n) => `All Titles (${n})`, sectionTitle: 'TITLES STATISTICS' },
   { id: 'day', label: 'Day', nameColLabel: 'Day', totalLabel: (n) => `All Days (${n})`, sectionTitle: 'DAY STATISTICS' },
 ];
 
@@ -565,6 +565,7 @@ export function RedditReportPage() {
                 </button>
               ))}
             </div>
+            <div className="gads-tabs-spacer" />
             <div className="gads-tabs-actions">
               <div style={{ position: 'relative' }} ref={colEditorRef}>
                 <button type="button" className={`gads-col-btn${colEditorOpen ? ' active' : ''}`} title="Show/hide columns" onClick={() => setColEditorOpen((v) => !v)}>

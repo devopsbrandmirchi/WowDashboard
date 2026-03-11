@@ -1876,7 +1876,7 @@ body {
     align-items: stretch;
     border-bottom: 2px solid var(--border);
     overflow-y: hidden;
-    overflow-x: hidden;
+    overflow-x: visible;
     position: relative;
 }
 
@@ -1915,7 +1915,7 @@ body {
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 0 8px;
+    padding: 0 12px;
     flex-shrink: 0;
     border-left: 1px solid var(--border-light);
     position: sticky;
@@ -1923,6 +1923,7 @@ body {
     background: var(--bg);
     z-index: 10;
     box-shadow: -4px 0 8px rgba(0, 0, 0, 0.05);
+    margin-left: auto;
 }
 
 /* Column Editor Dropdown */
@@ -2280,7 +2281,11 @@ body {
 }
 
 /* Edit Columns button & panel */
-.gads-tabs-spacer { flex: 1; }
+.gads-tabs-spacer { 
+    flex: 1; 
+    min-width: 12px;
+    flex-shrink: 0;
+}
 
 .gads-col-btn {
     padding: 7px 12px;
