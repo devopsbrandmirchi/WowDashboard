@@ -557,7 +557,6 @@ export function TiktokReportPage() {
                 </button>
               ))}
             </div>
-            <div className="gads-tabs-spacer" />
             <div className="gads-tabs-actions">
               <div style={{ position: 'relative' }} ref={colEditorRef}>
                 <button type="button" className={`gads-col-btn${colEditorOpen ? ' active' : ''}`} title="Show/hide columns" onClick={() => setColEditorOpen((v) => !v)}>

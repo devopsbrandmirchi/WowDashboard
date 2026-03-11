@@ -41,7 +41,6 @@
     /* Typography */
     --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-mono: 'Roboto Mono', 'SF Mono', 'Fira Code', monospace;
-    --font-roboto: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     /* Layout */
     --sidebar-width: 260px;
     --header-height: 64px;
@@ -133,11 +132,9 @@
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 html { font-size: 14px; scroll-behavior: smooth; }
 body {
-    font-family: var(--font-roboto);
-    font-size: 18px;
-    font-weight: 400;
+    font-family: var(--font-family);
     background: var(--bg-secondary);
-    color: #000000;
+    color: var(--text-primary);
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
 }
@@ -382,10 +379,9 @@ body {
     align-items: center;
     gap: 10px;
     padding: 9px 12px;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
-    font-family: var(--font-mono);
-    color: #73B9FF;
+    color: rgba(255,255,255,0.65);
     text-decoration: none;
     border-radius: var(--radius-sm);
     transition: all 0.15s;
@@ -393,15 +389,15 @@ body {
 }
 
 .sidebar-nav a:hover {
-    color: #A5D228;
+    color: #FFFFFF;
     background: rgba(255,255,255,0.08);
 }
 
 .sidebar-nav a.active {
-    background: #F40000;
-    color: #00286E;
-    font-weight: 500;
-    box-shadow: 0 2px 8px rgba(244,0,0,0.3);
+    background: var(--primary);
+    color: #FFFFFF;
+    font-weight: 600;
+    box-shadow: 0 2px 8px rgba(237,28,36,0.3);
 }
 
 .platform-dot {
@@ -843,16 +839,16 @@ body {
 }
 
 .btn-primary {
-    background: #F40000;
-    color: #FFFFFF;
-    border-color: #F40000;
-    box-shadow: 0 1px 3px rgba(244,0,0,0.2);
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+    box-shadow: 0 1px 3px rgba(237,28,36,0.2);
 }
 
 .btn-primary:hover {
-    background: #FFA01E;
-    border-color: #FFA01E;
-    box-shadow: 0 2px 6px rgba(255,160,30,0.3);
+    background: var(--primary-dark);
+    border-color: var(--primary-dark);
+    box-shadow: 0 2px 6px rgba(237,28,36,0.3);
 }
 
 .btn-navy {
@@ -906,33 +902,16 @@ body {
 }
 
 .page-title-bar h2 {
-    font-size: 28px;
-    font-weight: 400;
-    font-family: var(--font-mono);
-    color: #00286E;
-    text-transform: uppercase;
-    letter-spacing: 0;
-    margin-bottom: 8px;
-}
-
-.page-title-bar h3,
-.page-title-bar .subheading {
-    font-size: 20px;
-    font-weight: 700;
-    font-family: var(--font-mono);
-    color: #B9B9B9;
-    text-transform: uppercase;
-    letter-spacing: 0;
-    margin-top: 4px;
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--navy);
+    letter-spacing: -0.5px;
 }
 
 .page-title-bar p {
-    font-size: 18px;
-    font-family: var(--font-roboto);
-    font-weight: 400;
-    color: #000000;
-    text-transform: none;
-    margin-top: 8px;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 2px;
 }
 
 /* ============================================
@@ -1106,12 +1085,11 @@ body {
     background: var(--bg-tertiary);
     padding: 10px 14px;
     text-align: left;
-    font-weight: 400;
-    font-size: 16px;
-    font-family: var(--font-mono);
-    text-transform: none;
-    letter-spacing: 0;
-    color: #00286E;
+    font-weight: 700;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--navy);
     border-bottom: 2px solid var(--border);
     white-space: nowrap;
     position: sticky;
@@ -1124,22 +1102,11 @@ body {
 .data-table tbody td {
     padding: 10px 14px;
     border-bottom: 1px solid var(--border-light);
-    color: #000000;
-    font-size: 14px;
-    font-family: var(--font-roboto);
-    font-weight: 400;
+    color: var(--text-primary);
     font-variant-numeric: tabular-nums;
 }
 
 .data-table tbody td.text-right { text-align: right; }
-
-.data-table tbody tr:nth-child(even) {
-    background: #C8E3FF;
-}
-
-.data-table tbody tr:nth-child(odd) {
-    background: #FFFFFF;
-}
 
 .data-table tbody tr:last-child td { border-bottom: none; }
 
@@ -1530,27 +1497,11 @@ body {
     padding: 0.75rem;
     text-align: left;
     border-bottom: 1px solid var(--border);
-    font-family: var(--font-roboto);
-}
-
-.users-table td {
-    font-size: 14px;
-    color: #000000;
-}
-
-.users-table tr:nth-child(even) {
-    background: #C8E3FF;
-}
-
-.users-table tr:nth-child(odd) {
-    background: #FFFFFF;
 }
 
 .users-table th {
-    font-weight: 400;
-    font-size: 16px;
-    font-family: var(--font-mono);
-    color: #00286E;
+    font-weight: 600;
+    color: var(--navy);
 }
 
 .users-row-actions {
@@ -1915,7 +1866,6 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--radius-md) var(--radius-md) 0 0;
     overflow: visible;
-    overflow-y: hidden;
     margin-top: 4px;
 }
 
@@ -1923,34 +1873,23 @@ body {
     display: flex;
     align-items: stretch;
     border-bottom: 2px solid var(--border);
-    overflow-y: hidden;
 }
 
 .gads-tabs {
     display: flex;
     gap: 0;
-    overflow-x: auto;
-    overflow-y: hidden;
+    overflow-x: unset;
     flex-wrap: nowrap;
     align-items: center;
-    flex: 0 1 auto;
+    flex: 1;
     min-width: 0;
     padding: 0 6px;
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
 }
 
-.gads-tabs::-webkit-scrollbar { 
-    height: 3px; 
-    width: 0;
-}
+.gads-tabs::-webkit-scrollbar { height: 3px; }
 .gads-tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-.gads-tabs::-webkit-scrollbar-track { background: transparent; }
-
-.gads-tabs-spacer {
-    flex: 1;
-    min-width: 12px;
-}
 
 .gads-tabs-actions {
     display: flex;
@@ -1959,9 +1898,6 @@ body {
     padding: 0 8px;
     flex-shrink: 0;
     border-left: 1px solid var(--border-light);
-    background: var(--bg);
-    position: relative;
-    z-index: 1;
 }
 
 /* Column Editor Dropdown */
@@ -2140,16 +2076,15 @@ body {
 .gads-table { width: 100%; border-collapse: collapse; }
 
 .gads-table thead th {
-    background: var(--bg-tertiary);
+    background: var(--navy);
     padding: 10px 14px;
     text-align: left;
-    font-weight: 400;
-    font-size: 13.5px;
-    font-family: var(--font-mono);
-    text-transform: none;
-    letter-spacing: 0;
-    color: #00286E;
-    border-bottom: 2px solid var(--border);
+    font-weight: 600;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: rgba(255,255,255,0.92);
+    border-bottom: none;
     white-space: nowrap;
     position: sticky;
     top: 0;
@@ -2157,26 +2092,20 @@ body {
 }
 
 .gads-table thead th.gads-sortable:hover {
-    color: #00286E !important;
-    background: var(--navy-bg);
+    color: #fff !important;
+    background: var(--navy-light);
 }
 
 .gads-table tbody td {
     padding: 9px 14px;
-    font-size: 14px;
-    font-family: var(--font-roboto);
-    font-weight: 400;
+    font-size: 12.5px;
     border-bottom: 1px solid var(--border-light);
-    color: #000000;
+    color: var(--text-primary);
     font-variant-numeric: tabular-nums;
 }
 
 .gads-table tbody tr:nth-child(even) {
-    background: #C8E3FF;
-}
-
-.gads-table tbody tr:nth-child(odd) {
-    background: #FFFFFF;
+    background: rgba(238,238,248,0.35);
 }
 
 .gads-table tbody tr:hover {
@@ -2195,19 +2124,13 @@ body {
 
 .gads-sub-table thead th {
     background: var(--bg-tertiary);
-    font-size: 16px;
-    font-family: var(--font-mono);
-    font-weight: 400;
-    color: #00286E;
+    font-size: 10px;
     padding: 8px 12px;
 }
 
 .gads-sub-table tbody td {
     padding: 8px 12px;
-    font-size: 14px;
-    font-family: var(--font-roboto);
-    font-weight: 400;
-    color: #000000;
+    font-size: 12px;
 }
 
 .gads-sub-row { background: var(--bg-secondary) !important; }
@@ -2785,24 +2708,9 @@ body {
 /* Table wrapper for mobile horizontal scroll */
 .table-wrapper {
     overflow-x: auto;
-    overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
-}
-
-/* Hide vertical scrollbars in reporting pages - keep horizontal scrolling */
-.page-section {
-    overflow-y: hidden;
-}
-
-.page-content {
-    overflow-y: hidden;
-}
-
-#meta-tab-content,
-#gads-tab-content {
-    overflow-y: hidden;
 }
 
 /* Meta report: no page-level horizontal scroll (match Google Ads behavior) */
@@ -2826,12 +2734,8 @@ body {
     min-width: 0;
 }
 
-.table-wrapper::-webkit-scrollbar { 
-    height: 5px; 
-    width: 0;
-}
+.table-wrapper::-webkit-scrollbar { height: 5px; }
 .table-wrapper::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-.table-wrapper::-webkit-scrollbar-track { background: transparent; }
 
 /* ============================================
    REDDIT-STYLE DATE PICKER
