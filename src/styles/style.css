@@ -1866,6 +1866,8 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--radius-md) var(--radius-md) 0 0;
     overflow: visible;
+    overflow-y: hidden;
+    overflow-x: hidden;
     margin-top: 4px;
 }
 
@@ -1873,23 +1875,41 @@ body {
     display: flex;
     align-items: stretch;
     border-bottom: 2px solid var(--border);
+    overflow-y: hidden;
+    overflow-x: hidden;
+    position: relative;
 }
 
 .gads-tabs {
     display: flex;
     gap: 0;
-    overflow-x: unset;
+    overflow-x: auto;
+    overflow-y: hidden;
     flex-wrap: nowrap;
     align-items: center;
-    flex: 1;
+    flex: 0 1 auto;
     min-width: 0;
-    padding: 0 6px;
+    padding: 0 6px 8px 6px;
     scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
+    scrollbar-color: var(--border) var(--bg-secondary);
+    -webkit-overflow-scrolling: touch;
 }
 
-.gads-tabs::-webkit-scrollbar { height: 3px; }
-.gads-tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.gads-tabs::-webkit-scrollbar { 
+    height: 6px; 
+    width: 0;
+}
+.gads-tabs::-webkit-scrollbar-thumb { 
+    background: var(--border); 
+    border-radius: 3px; 
+}
+.gads-tabs::-webkit-scrollbar-track { 
+    background: var(--bg-secondary); 
+    border-radius: 3px;
+}
+.gads-tabs::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
 
 .gads-tabs-actions {
     display: flex;
@@ -1898,6 +1918,11 @@ body {
     padding: 0 8px;
     flex-shrink: 0;
     border-left: 1px solid var(--border-light);
+    position: sticky;
+    right: 0;
+    background: var(--bg);
+    z-index: 10;
+    box-shadow: -4px 0 8px rgba(0, 0, 0, 0.05);
 }
 
 /* Column Editor Dropdown */
