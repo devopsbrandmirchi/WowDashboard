@@ -1,6 +1,16 @@
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { useUserPermissions } from '../hooks/useUserPermissions';
+
+/** Campaigns Reference submenu: child id(s) under the expandable "Campaigns Reference" menu */
+const CAMPAIGNS_REFERENCE_SUBMENU_IDS = [
+  'google-campaigns-reference',
+  'reddit-campaigns-reference',
+  'tiktok-campaigns-reference',
+  'facebook-campaigns-reference',
+  'facebook-adset-reference',
+];
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Executive Dashboard', icon: '📊', section: 'Overview' },
@@ -32,6 +42,10 @@ const NAV_ITEMS = [
   { id: 'roles-permissions', label: 'Roles & Permissions', icon: '🔐', section: 'System' },
   { id: 'users', label: 'Users', icon: '👤', section: 'System' },
   { id: 'google-campaigns-reference', label: 'Google Campaigns Reference', icon: '📋', section: 'System' },
+  { id: 'reddit-campaigns-reference', label: 'Reddit Campaigns Reference', icon: '📋', section: 'System' },
+  { id: 'tiktok-campaigns-reference', label: 'TikTok Campaigns Reference', icon: '📋', section: 'System' },
+  { id: 'facebook-campaigns-reference', label: 'Facebook Campaigns Reference', icon: '📋', section: 'System' },
+  { id: 'facebook-adset-reference', label: 'Facebook Adset Reference', icon: '📋', section: 'System' },
 ];
 
 function groupBySection(items) {
@@ -44,6 +58,7 @@ function groupBySection(items) {
 }
 
 const sections = groupBySection(NAV_ITEMS);
+const navItemById = new Map(NAV_ITEMS.map((item) => [item.id, item]));
 
 const PAGE_ROUTES = {
   'subscriptions-analytics': '/subscriptions/analytics',
@@ -59,6 +74,10 @@ const PAGE_ROUTES = {
   'roles-permissions': '/settings/roles-permissions',
   'users': '/settings/users',
   'google-campaigns-reference': '/settings/google-campaigns-reference',
+  'reddit-campaigns-reference': '/settings/reddit-campaigns-reference',
+  'tiktok-campaigns-reference': '/settings/tiktok-campaigns-reference',
+  'facebook-campaigns-reference': '/settings/facebook-campaigns-reference',
+  'facebook-adset-reference': '/settings/facebook-adset-reference',
 };
 
 export function Sidebar() {
@@ -66,8 +85,39 @@ export function Sidebar() {
   const location = useLocation();
   const { currentPage, showPage, sidebarOpen, sidebarCollapsed, branding } = useApp();
   const { canAccessSidebar } = useUserPermissions();
+  const campaignsReferencePaths = CAMPAIGNS_REFERENCE_SUBMENU_IDS.map((id) => PAGE_ROUTES[id]).filter(Boolean);
+  const isCampaignsReferencePath = campaignsReferencePaths.includes(location.pathname);
+  const [campaignsReferenceOpen, setCampaignsReferenceOpen] = useState(isCampaignsReferencePath);
+  useEffect(() => {
+    if (isCampaignsReferencePath) setCampaignsReferenceOpen(true);
+  }, [isCampaignsReferencePath]);
 
   const sidebarClass = ['sidebar', sidebarOpen && 'open', sidebarCollapsed && 'collapsed'].filter(Boolean).join(' ');
+
+  const renderNavLink = (item) => {
+    const path = PAGE_ROUTES[item.id];
+    const isActive = currentPage === item.id || (path && location.pathname === path);
+    return (
+      <li key={item.id}>
+        <a
+          href={path || '#'}
+          className={isActive ? 'active' : ''}
+          onClick={(e) => {
+            e.preventDefault();
+            showPage(item.id);
+            if (path) navigate(path);
+          }}
+        >
+          {item.logo ? (
+            <span className="platform-logo" style={item.logoStyle}>{item.logo}</span>
+          ) : item.icon ? (
+            <span className="nav-icon">{item.icon}</span>
+          ) : null}
+          {item.label}
+        </a>
+      </li>
+    );
+  };
 
   return (
     <aside className={sidebarClass} id="sidebar">
@@ -79,35 +129,49 @@ export function Sidebar() {
       </div>
 
       {Array.from(sections.entries()).map(([sectionLabel, items]) => {
+        if (sectionLabel === 'System') {
+          const systemItems = items.filter((item) => !CAMPAIGNS_REFERENCE_SUBMENU_IDS.includes(item.id));
+          const submenuItems = CAMPAIGNS_REFERENCE_SUBMENU_IDS.map((id) => navItemById.get(id)).filter(Boolean);
+          const visibleSystem = systemItems.filter((item) => canAccessSidebar(item.id));
+          const visibleSub = submenuItems.filter((item) => canAccessSidebar(item.id));
+          if (visibleSystem.length === 0 && visibleSub.length === 0) return null;
+          return (
+            <div key={sectionLabel} className="sidebar-section sidebar-section-with-submenu">
+              <div className="sidebar-section-label">{sectionLabel}</div>
+              <ul className="sidebar-nav">
+                {visibleSystem.map((item) => renderNavLink(item))}
+              </ul>
+              {visibleSub.length > 0 && (
+                <div className="sidebar-submenu">
+                  <button
+                    type="button"
+                    className={`sidebar-submenu-toggle ${campaignsReferenceOpen ? 'open' : ''}`}
+                    onClick={() => setCampaignsReferenceOpen((o) => !o)}
+                    aria-expanded={campaignsReferenceOpen}
+                  >
+                    <span className="nav-icon">📋</span>
+                    <span>Campaigns Reference</span>
+                    <span className="sidebar-submenu-chevron" aria-hidden>{campaignsReferenceOpen ? '▼' : '▶'}</span>
+                  </button>
+                  {campaignsReferenceOpen && (
+                    <ul className="sidebar-nav sidebar-submenu-nav">
+                      {visibleSub.map((item) => renderNavLink(item))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        }
         const visibleItems = items.filter((item) => canAccessSidebar(item.id));
         if (visibleItems.length === 0) return null;
         return (
-        <div key={sectionLabel} className="sidebar-section">
-          <div className="sidebar-section-label">{sectionLabel}</div>
-          <ul className="sidebar-nav">
-            {visibleItems.map((item) => (
-              <li key={item.id}>
-                <a
-                  href={PAGE_ROUTES[item.id] || '#'}
-                  className={(currentPage === item.id || (PAGE_ROUTES[item.id] && location.pathname === PAGE_ROUTES[item.id])) ? 'active' : ''}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    showPage(item.id);
-                    const path = PAGE_ROUTES[item.id];
-                    if (path) navigate(path);
-                  }}
-                >
-                  {item.logo ? (
-                    <span className="platform-logo" style={item.logoStyle}>{item.logo}</span>
-                  ) : item.icon ? (
-                    <span className="nav-icon">{item.icon}</span>
-                  ) : null}
-                  {item.label}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
+          <div key={sectionLabel} className="sidebar-section">
+            <div className="sidebar-section-label">{sectionLabel}</div>
+            <ul className="sidebar-nav">
+              {visibleItems.map((item) => renderNavLink(item))}
+            </ul>
+          </div>
         );
       })}
     </aside>

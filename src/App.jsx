@@ -18,6 +18,10 @@ import { SettingsPage } from './pages/SettingsPage';
 import { RolesPermissionsPage } from './pages/RolesPermissionsPage';
 import { UsersPage } from './pages/UsersPage';
 import { GoogleCampaignsReferencePage } from './pages/GoogleCampaignsReferencePage';
+import { RedditCampaignsReferencePage } from './pages/RedditCampaignsReferencePage';
+import { TiktokCampaignsReferencePage } from './pages/TiktokCampaignsReferencePage';
+import { FacebookCampaignsReferencePage } from './pages/FacebookCampaignsReferencePage';
+import { FacebookAdsetReferencePage } from './pages/FacebookAdsetReferencePage';
 import { ProfilePage } from './pages/ProfilePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { VimeoAnalyticsPage } from './pages/VimeoAnalyticsPage';
@@ -41,6 +45,10 @@ const PATH_TO_PAGE = {
   '/settings/roles-permissions': 'roles-permissions',
   '/settings/users': 'users',
   '/settings/google-campaigns-reference': 'google-campaigns-reference',
+  '/settings/reddit-campaigns-reference': 'reddit-campaigns-reference',
+  '/settings/tiktok-campaigns-reference': 'tiktok-campaigns-reference',
+  '/settings/facebook-campaigns-reference': 'facebook-campaigns-reference',
+  '/settings/facebook-adset-reference': 'facebook-adset-reference',
   '/profile': 'profile',
 };
 
@@ -65,6 +73,10 @@ function CurrentPage({ forcePage }) {
   if (page === 'roles-permissions') return <RolesPermissionsPage />;
   if (page === 'users') return <UsersPage />;
   if (page === 'google-campaigns-reference') return <GoogleCampaignsReferencePage />;
+  if (page === 'reddit-campaigns-reference') return <RedditCampaignsReferencePage />;
+  if (page === 'tiktok-campaigns-reference') return <TiktokCampaignsReferencePage />;
+  if (page === 'facebook-campaigns-reference') return <FacebookCampaignsReferencePage />;
+  if (page === 'facebook-adset-reference') return <FacebookAdsetReferencePage />;
   if (page === 'profile') return <ProfilePage />;
   if (page === 'subscriptions-analytics') return <VimeoAnalyticsPage />;
   if (page === 'subscriptions-subscribers') return <SubscriberIntelligencePage />;
@@ -92,6 +104,14 @@ function AppContent({ forcePage }) {
     } else if (path === '/settings' && !canAccessSidebar('settings')) {
       navigate('/', { replace: true });
     } else if (path === '/settings/google-campaigns-reference' && !canAccessSidebar('google-campaigns-reference')) {
+      navigate('/', { replace: true });
+    } else if (path === '/settings/reddit-campaigns-reference' && !canAccessSidebar('reddit-campaigns-reference')) {
+      navigate('/', { replace: true });
+    } else if (path === '/settings/tiktok-campaigns-reference' && !canAccessSidebar('tiktok-campaigns-reference')) {
+      navigate('/', { replace: true });
+    } else if (path === '/settings/facebook-campaigns-reference' && !canAccessSidebar('facebook-campaigns-reference')) {
+      navigate('/', { replace: true });
+    } else if (path === '/settings/facebook-adset-reference' && !canAccessSidebar('facebook-adset-reference')) {
       navigate('/', { replace: true });
     }
   }, [location.pathname, canAccessSidebar, navigate, permissionsLoading]);
@@ -148,6 +168,10 @@ export default function App() {
         <Route path="/settings/roles-permissions" element={<AppContent forcePage="roles-permissions" />} />
         <Route path="/settings/users" element={<AppContent forcePage="users" />} />
         <Route path="/settings/google-campaigns-reference" element={<AppContent forcePage="google-campaigns-reference" />} />
+        <Route path="/settings/reddit-campaigns-reference" element={<AppContent forcePage="reddit-campaigns-reference" />} />
+        <Route path="/settings/tiktok-campaigns-reference" element={<AppContent forcePage="tiktok-campaigns-reference" />} />
+        <Route path="/settings/facebook-campaigns-reference" element={<AppContent forcePage="facebook-campaigns-reference" />} />
+        <Route path="/settings/facebook-adset-reference" element={<AppContent forcePage="facebook-adset-reference" />} />
         <Route path="/settings" element={<AppContent forcePage="settings" />} />
         <Route path="*" element={<AppContent />} />
       </Routes>

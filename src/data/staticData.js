@@ -108,6 +108,10 @@ export const PAGE_TITLES = {
   'roles-permissions': 'Roles & Permissions',
   users: 'Users',
   'google-campaigns-reference': 'Google Campaigns Reference',
+  'reddit-campaigns-reference': 'Reddit Campaigns Reference',
+  'tiktok-campaigns-reference': 'TikTok Campaigns Reference',
+  'facebook-campaigns-reference': 'Facebook Campaigns Reference',
+  'facebook-adset-reference': 'Facebook Adset Reference',
   profile: 'Profile',
 };
 
