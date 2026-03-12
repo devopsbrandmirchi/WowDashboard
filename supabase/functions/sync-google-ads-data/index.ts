@@ -438,6 +438,26 @@ Deno.serve(async (req: Request) => {
       const { error } = await supabase.from("google_campaigns_data").insert(chunk);
       if (error) throw new Error(`Campaigns insert: ${error.message}`);
     }
+
+    // Insert campaign_name into google_campaigns_reference_data if not already present
+    const uniqueCampaignNames = [...new Set(
+      campaignsPayload.map((r) => (r.campaign_name as string)?.trim()).filter(Boolean)
+    )];
+    if (uniqueCampaignNames.length > 0) {
+      const { data: existing } = await supabase
+        .from("google_campaigns_reference_data")
+        .select("campaign_name")
+        .in("campaign_name", uniqueCampaignNames);
+      const existingSet = new Set((existing ?? []).map((r) => (r.campaign_name as string)?.trim()).filter(Boolean));
+      const toInsert = uniqueCampaignNames
+        .filter((name) => !existingSet.has(name))
+        .map((campaign_name) => ({ campaign_name }));
+      if (toInsert.length > 0) {
+        const { error: refErr } = await supabase.from("google_campaigns_reference_data").insert(toInsert);
+        if (refErr) throw new Error(`Reference data insert: ${refErr.message}`);
+        console.log("[sync-google-ads-data] Inserted", toInsert.length, "new campaign(s) into google_campaigns_reference_data");
+      }
+    }
     for (let i = 0; i < adGroupsPayload.length; i += BATCH) {
       const chunk = adGroupsPayload.slice(i, i + BATCH).map(stripId);
       const { error } = await supabase.from("google_ad_groups_data").insert(chunk);
