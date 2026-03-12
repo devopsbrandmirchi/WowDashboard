@@ -275,12 +275,14 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Use yesterday for segments.date range
+    // Date range: last 2 days (yesterday and the day before)
     const now = new Date();
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const dateFrom = yesterday.toISOString().slice(0, 10);
-    const dateTo = dateFrom;
+    const dateTo = new Date(now);
+    dateTo.setDate(dateTo.getDate() - 1);
+    const dateFrom = new Date(now);
+    dateFrom.setDate(dateFrom.getDate() - 2);
+    const dateFromStr = dateFrom.toISOString().slice(0, 10);
+    const dateToStr = dateTo.toISOString().slice(0, 10);
 
     const campaignQuery = `
       SELECT
@@ -316,7 +318,7 @@ Deno.serve(async (req: Request) => {
         metrics.phone_calls,
         metrics.average_cpm
       FROM campaign
-      WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
+      WHERE segments.date BETWEEN '${dateFromStr}' AND '${dateToStr}'
         AND campaign.status != 'REMOVED'
     `;
 
@@ -333,7 +335,7 @@ Deno.serve(async (req: Request) => {
         metrics.clicks,
         metrics.cost_micros
       FROM ad_group
-      WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
+      WHERE segments.date BETWEEN '${dateFromStr}' AND '${dateToStr}'
         AND ad_group.status != 'REMOVED'
     `;
 
@@ -352,7 +354,7 @@ Deno.serve(async (req: Request) => {
         metrics.cost_micros,
         metrics.conversions
       FROM keyword_view
-      WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
+      WHERE segments.date BETWEEN '${dateFromStr}' AND '${dateToStr}'
         AND ad_group_criterion.status != 'REMOVED'
     `;
 
@@ -397,8 +399,8 @@ Deno.serve(async (req: Request) => {
       .from("google_campaigns_data")
       .delete()
       .in("customer_id", customerIds)
-      .gte("segment_date", dateFrom)
-      .lte("segment_date", dateTo);
+      .gte("segment_date", dateFromStr)
+      .lte("segment_date", dateToStr);
     if (delCampErr) throw new Error(`Campaigns delete: ${delCampErr.message}`);
 
     const campaignIds = [...new Set(campaignsPayload.map((r) => r.campaign_id).filter(Boolean))].map((x) => Number(x) || x);
@@ -407,16 +409,16 @@ Deno.serve(async (req: Request) => {
         .from("google_ad_groups_data")
         .delete()
         .in("campaign_id", campaignIds)
-        .gte("segment_date", dateFrom)
-        .lte("segment_date", dateTo);
+        .gte("segment_date", dateFromStr)
+        .lte("segment_date", dateToStr);
       if (delAdErr) throw new Error(`Ad groups delete: ${delAdErr.message}`);
 
       const { error: delKwErr } = await supabase
         .from("google_keywords_data")
         .delete()
         .in("campaign_id", campaignIds)
-        .gte("segment_date", dateFrom)
-        .lte("segment_date", dateTo);
+        .gte("segment_date", dateFromStr)
+        .lte("segment_date", dateToStr);
       if (delKwErr) throw new Error(`Keywords delete: ${delKwErr.message}`);
     }
 
