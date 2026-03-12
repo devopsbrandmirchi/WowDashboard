@@ -79,7 +79,7 @@ export function useUserPermissions() {
       return true;
     }
     if (isLimitedRole) {
-      return !['users', 'settings'].includes(navId);
+      return !['users', 'settings', 'google-campaigns-reference'].includes(navId);
     }
     if (permissions.length > 0) {
       return permissions.includes(key);

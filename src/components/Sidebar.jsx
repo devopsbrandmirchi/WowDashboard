@@ -31,6 +31,7 @@ const NAV_ITEMS = [
   { id: 'settings',  label: 'White-Label Settings',  icon: '⚙️', section: 'System' },
   { id: 'roles-permissions', label: 'Roles & Permissions', icon: '🔐', section: 'System' },
   { id: 'users', label: 'Users', icon: '👤', section: 'System' },
+  { id: 'google-campaigns-reference', label: 'Google Campaigns Reference', icon: '📋', section: 'System' },
 ];
 
 function groupBySection(items) {
@@ -57,6 +58,7 @@ const PAGE_ROUTES = {
   'settings': '/settings',
   'roles-permissions': '/settings/roles-permissions',
   'users': '/settings/users',
+  'google-campaigns-reference': '/settings/google-campaigns-reference',
 };
 
 export function Sidebar() {

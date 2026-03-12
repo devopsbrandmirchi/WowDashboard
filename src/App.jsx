@@ -17,6 +17,7 @@ import { CombinedReportPage } from './pages/CombinedReportPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { RolesPermissionsPage } from './pages/RolesPermissionsPage';
 import { UsersPage } from './pages/UsersPage';
+import { GoogleCampaignsReferencePage } from './pages/GoogleCampaignsReferencePage';
 import { ProfilePage } from './pages/ProfilePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { VimeoAnalyticsPage } from './pages/VimeoAnalyticsPage';
@@ -39,6 +40,7 @@ const PATH_TO_PAGE = {
   '/settings': 'settings',
   '/settings/roles-permissions': 'roles-permissions',
   '/settings/users': 'users',
+  '/settings/google-campaigns-reference': 'google-campaigns-reference',
   '/profile': 'profile',
 };
 
@@ -62,6 +64,7 @@ function CurrentPage({ forcePage }) {
   if (page === 'settings') return <SettingsPage />;
   if (page === 'roles-permissions') return <RolesPermissionsPage />;
   if (page === 'users') return <UsersPage />;
+  if (page === 'google-campaigns-reference') return <GoogleCampaignsReferencePage />;
   if (page === 'profile') return <ProfilePage />;
   if (page === 'subscriptions-analytics') return <VimeoAnalyticsPage />;
   if (page === 'subscriptions-subscribers') return <SubscriberIntelligencePage />;
@@ -87,6 +90,8 @@ function AppContent({ forcePage }) {
     } else if (path === '/settings/roles-permissions' && !canAccessSidebar('roles-permissions')) {
       navigate('/', { replace: true });
     } else if (path === '/settings' && !canAccessSidebar('settings')) {
+      navigate('/', { replace: true });
+    } else if (path === '/settings/google-campaigns-reference' && !canAccessSidebar('google-campaigns-reference')) {
       navigate('/', { replace: true });
     }
   }, [location.pathname, canAccessSidebar, navigate, permissionsLoading]);
@@ -142,6 +147,7 @@ export default function App() {
         <Route path="/subscriptions/subscribers" element={<AppContent forcePage="subscriptions-subscribers" />} />
         <Route path="/settings/roles-permissions" element={<AppContent forcePage="roles-permissions" />} />
         <Route path="/settings/users" element={<AppContent forcePage="users" />} />
+        <Route path="/settings/google-campaigns-reference" element={<AppContent forcePage="google-campaigns-reference" />} />
         <Route path="/settings" element={<AppContent forcePage="settings" />} />
         <Route path="*" element={<AppContent />} />
       </Routes>

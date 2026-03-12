@@ -107,6 +107,7 @@ export const PAGE_TITLES = {
   settings: 'White-Label Settings',
   'roles-permissions': 'Roles & Permissions',
   users: 'Users',
+  'google-campaigns-reference': 'Google Campaigns Reference',
   profile: 'Profile',
 };
 

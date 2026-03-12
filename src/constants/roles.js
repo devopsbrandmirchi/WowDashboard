@@ -72,6 +72,7 @@ export const ALL_PERMISSION_KEYS = {
     'sidebar:settings',
     'sidebar:roles-permissions',
     'sidebar:users',
+    'sidebar:google-campaigns-reference',
   ],
   reportGoogleAds: [
     'report:google-ads:campaigntypes',
