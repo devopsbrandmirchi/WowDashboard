@@ -824,7 +824,7 @@ export function GoogleAdsPage() {
           {!loading && activeTab === 'keywords' && renderTable('keywords', filteredKeywords, keywordCols, {
             rowKey: (r) => r._key || r.criterion_id,
             prefix: (
-              <div className="gads-sub-filters">
+              <div className="gads-sub-filters" >
                 <span className="gads-sf-label">Match Type:</span>
                 {['', 'BROAD', 'PHRASE', 'EXACT'].map((mt) => (
                   <button key={mt} className={`btn btn-sm ${matchFilter === mt ? 'btn-primary' : 'btn-outline'}`} onClick={() => { setMatchFilter(mt); setPg((p) => ({ ...p, keywords: 1 })); }}>{mt || 'All'}</button>

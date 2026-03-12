@@ -600,11 +600,11 @@ export function MetaReportPage() {
 
           {!loading && (
             <>
-              {['country', 'product', 'shows'].includes(activeTab) && (
+              {/* {['country', 'product', 'shows'].includes(activeTab) && (
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
                   Source: <strong>facebook_campaigns_reference_data</strong> — {currentTabConfig.nameColLabel} matched by campaign name.
                 </p>
-              )}
+              )} */}
               <div className="panel">
                 <div className="panel-body no-padding">
                   <div className="table-wrapper">

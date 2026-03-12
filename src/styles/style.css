@@ -7,7 +7,7 @@
     --primary-dark: #C41920;
     --primary-light: #F04E54;
     --primary-bg: #FFF0F0;
-    --navy: #1A1F71;
+    --navy: #00286E;
     --navy-dark: #12154F;
     --navy-light: #2A3090;
     --navy-bg: #EEEEF8;
@@ -2207,7 +2207,7 @@ body {
     gap: 8px;
     margin-bottom: 16px;
     flex-wrap: wrap;
-    padding: 0 18px;
+    padding: 18px 10px 0 10px;
 }
 
 .gads-sf-label {
