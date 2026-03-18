@@ -26,6 +26,10 @@ function formatSyncLogStats(platform, meta) {
     const n = meta.insight_rows;
     return n != null ? `${n} ads` : '—';
   }
+  if (platform === 'tiktok_ads') {
+    const n = meta.report_rows;
+    return n != null ? `${n} rows` : '—';
+  }
   return '—';
 }
 
@@ -421,6 +425,14 @@ export function SettingsPage() {
                 showNotification={showNotification}
                 title="TikTok Ads"
                 connectDescription="Connect your TikTok For Business advertiser account to sync campaigns and performance into reports."
+                syncLogPlatform="tiktok_ads"
+                onSync={async (dateFrom, dateTo) => {
+                  const { data, error } = await supabase.functions.invoke('fetch-tiktok-campaigns-upsert', {
+                    body: { date_from: dateFrom, date_to: dateTo },
+                  });
+                  if (error) throw new Error(error.message || 'Edge function error');
+                  if (data?.error) throw new Error(data.message || data.error);
+                }}
               />
             )}
             {activeNav === 'branding' && (

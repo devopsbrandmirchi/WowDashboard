@@ -99,8 +99,8 @@ function normalizeRow(r) {
   return {
     campaign_id: r.campaign_id,
     campaign_name: r.campaign_name ?? '',
-    adset_id: r.adset_id ?? r.adgroup_id,
-    adset_name: r.adset_name ?? r.adgroup_name ?? '',
+    adset_id: r.adset_id ?? r.adgroup_id ?? r.ad_group_id,
+    adset_name: r.adset_name ?? r.adgroup_name ?? r.ad_group_name ?? '',
     ad_id: r.ad_id,
     ad_name: r.ad_name ?? '',
     placement: r.placement ?? '',
@@ -157,7 +157,9 @@ export function useTiktokReportData() {
       const buildDataQuery = () => {
         let q = supabase.from('tiktok_campaigns_data').select('*');
         if ((f.campaignSearch || '').trim()) q = q.ilike('campaign_name', `%${f.campaignSearch.trim()}%`);
-        if ((f.adGroupSearch || '').trim()) q = q.ilike('adset_name', `%${f.adGroupSearch.trim()}%`);
+        if ((f.adGroupSearch || '').trim()) {
+          q = q.ilike('ad_group_name', `%${f.adGroupSearch.trim()}%`);
+        }
         return q;
       };
 

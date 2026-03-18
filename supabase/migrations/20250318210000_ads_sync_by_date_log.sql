@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS public.ads_sync_by_date_log (
   date_range_end DATE,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   CONSTRAINT ads_sync_by_date_log_platform_check CHECK (platform IN (
-    'google_ads', 'reddit_ads', 'facebook_ads'
+    'google_ads', 'reddit_ads', 'facebook_ads', 'tiktok_ads'
   ))
 );
 
