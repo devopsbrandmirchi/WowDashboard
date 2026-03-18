@@ -92,6 +92,7 @@ function CurrentPage({ forcePage }) {
 function AppContent({ forcePage }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const isSettingsRoot = location.pathname === '/settings';
   const { canAccessSidebar, loading: permissionsLoading } = useUserPermissions();
 
   useEffect(() => {
@@ -119,8 +120,8 @@ function AppContent({ forcePage }) {
   return (
     <div className="app-layout">
       <Sidebar />
-      <main className="main-content">
-        <Header />
+      <main className={`main-content${isSettingsRoot ? ' main-content--settings' : ''}`}>
+        {!isSettingsRoot && <Header />}
         <CurrentPage forcePage={forcePage} />
       </main>
       <NotificationContainer />
