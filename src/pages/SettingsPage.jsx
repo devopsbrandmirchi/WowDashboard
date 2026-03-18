@@ -1,8 +1,49 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase.js';
+
+function formatSyncLogStats(platform, meta) {
+  if (!meta || typeof meta !== 'object') return '—';
+  if (platform === 'google_ads') {
+    const c = meta.campaigns ?? meta.campaign;
+    const ag = meta.ad_groups;
+    const kw = meta.keywords;
+    const parts = [];
+    if (c != null) parts.push(`${c} campaigns`);
+    if (ag != null) parts.push(`${ag} ad groups`);
+    if (kw != null) parts.push(`${kw} keywords`);
+    return parts.length ? parts.join(', ') : '—';
+  }
+  if (platform === 'reddit_ads') {
+    const a = meta.ad_group_rows;
+    const p = meta.placement_rows;
+    if (a != null || p != null) return `${a ?? 0} ad grp / ${p ?? 0} placement`;
+    return '—';
+  }
+  if (platform === 'facebook_ads') {
+    const n = meta.insight_rows;
+    return n != null ? `${n} ads` : '—';
+  }
+  return '—';
+}
+
+function fmtSyncAt(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
 
 const SETTINGS_NAV = [
   { id: 'google-ads', label: 'Google Ads' },
@@ -12,12 +53,38 @@ const SETTINGS_NAV = [
   { id: 'branding', label: 'White Label & Branding' },
 ];
 
-/** Same UX for Google, Reddit, Meta, TikTok: Connect → date range + Sync */
-function AdsPlatformPanel({ showNotification, title, connectDescription, onSync }) {
+/** Same UX for Google, Reddit, Meta, TikTok: Connect → date range + Sync; optional ads_sync_by_date_log table */
+function AdsPlatformPanel({ showNotification, title, connectDescription, onSync, syncLogPlatform }) {
   const [connected, setConnected] = useState(true);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [logRows, setLogRows] = useState([]);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logError, setLogError] = useState(null);
+
+  const loadSyncLog = useCallback(async () => {
+    if (!syncLogPlatform) return;
+    setLogLoading(true);
+    setLogError(null);
+    const { data, error } = await supabase
+      .from('ads_sync_by_date_log')
+      .select('account_id, segment_date, synced_at, date_range_start, date_range_end, run_id, metadata')
+      .eq('platform', syncLogPlatform)
+      .order('synced_at', { ascending: false })
+      .limit(120);
+    setLogLoading(false);
+    if (error) {
+      setLogError(error.message || 'Could not load sync log.');
+      setLogRows([]);
+      return;
+    }
+    setLogRows(data ?? []);
+  }, [syncLogPlatform]);
+
+  useEffect(() => {
+    loadSyncLog();
+  }, [loadSyncLog]);
 
   const handleSync = async () => {
     if (!startDate || !endDate) {
@@ -33,6 +100,7 @@ function AdsPlatformPanel({ showNotification, title, connectDescription, onSync 
       try {
         await onSync(startDate, endDate);
         showNotification(`${title} sync completed.`);
+        loadSyncLog();
       } catch (e) {
         showNotification(e?.message || String(e) || 'Sync failed.');
       } finally {
@@ -83,6 +151,51 @@ function AdsPlatformPanel({ showNotification, title, connectDescription, onSync 
           {syncing ? 'Syncing…' : 'Sync'}
         </button>
       </div>
+
+      {syncLogPlatform && (
+        <div className="wl-sync-log-section">
+          <div className="wl-sync-log-header">
+            <h3 className="wl-sync-log-title">Sync log</h3>
+            <button type="button" className="wl-btn wl-btn--outline wl-btn--sm" onClick={loadSyncLog} disabled={logLoading}>
+              {logLoading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+          {logError && <p className="wl-sync-log-error">{logError}</p>}
+          {!logError && logRows.length === 0 && !logLoading && (
+            <p className="wl-settings-desc">No sync runs logged yet. Run a sync above — logs appear after a successful upsert.</p>
+          )}
+          {(logRows.length > 0 || logLoading) && !logError && (
+            <div className="wl-table-wrap wl-sync-log-table-wrap">
+              <table className="wl-settings-table wl-sync-log-table">
+                <thead>
+                  <tr>
+                    <th>Synced</th>
+                    <th>Account</th>
+                    <th>Report date</th>
+                    <th>Range synced</th>
+                    <th>Rows / stats</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logRows.map((row) => (
+                    <tr key={`${row.run_id}-${row.account_id}-${row.segment_date}-${row.synced_at}`}>
+                      <td className="wl-td-mono">{fmtSyncAt(row.synced_at)}</td>
+                      <td className="wl-td-mono">{row.account_id}</td>
+                      <td>{row.segment_date}</td>
+                      <td className="wl-td-muted">
+                        {row.date_range_start && row.date_range_end
+                          ? `${row.date_range_start} → ${row.date_range_end}`
+                          : '—'}
+                      </td>
+                      <td className="wl-td-muted">{formatSyncLogStats(syncLogPlatform, row.metadata)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -263,6 +376,7 @@ export function SettingsPage() {
                 showNotification={showNotification}
                 title="Google Ads"
                 connectDescription="Connect your Google Ads manager account to sync campaigns and metrics."
+                syncLogPlatform="google_ads"
                 onSync={async (dateFrom, dateTo) => {
                   const { data, error } = await supabase.functions.invoke('sync-google-ads-upsert', {
                     body: { date_from: dateFrom, date_to: dateTo },
@@ -277,6 +391,14 @@ export function SettingsPage() {
                 showNotification={showNotification}
                 title="Reddit Ads"
                 connectDescription="Connect your Reddit Ads account to pull spend and conversion data into reports."
+                syncLogPlatform="reddit_ads"
+                onSync={async (dateFrom, dateTo) => {
+                  const { data, error } = await supabase.functions.invoke('fetch-reddit-campaigns-upsert', {
+                    body: { date_from: dateFrom, date_to: dateTo },
+                  });
+                  if (error) throw new Error(error.message || 'Edge function error');
+                  if (data?.error) throw new Error(data.message || data.error);
+                }}
               />
             )}
             {activeNav === 'meta' && (
@@ -284,6 +406,14 @@ export function SettingsPage() {
                 showNotification={showNotification}
                 title="Facebook / Meta Ads"
                 connectDescription="Link Meta Business Manager to sync campaign performance across your client accounts."
+                syncLogPlatform="facebook_ads"
+                onSync={async (dateFrom, dateTo) => {
+                  const { data, error } = await supabase.functions.invoke('fetch-facebook-campaigns-upsert', {
+                    body: { date_from: dateFrom, date_to: dateTo },
+                  });
+                  if (error) throw new Error(error.message || 'Edge function error');
+                  if (data?.error) throw new Error(data.message || data.error);
+                }}
               />
             )}
             {activeNav === 'tiktok' && (
