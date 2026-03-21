@@ -13,6 +13,7 @@ import { GoogleAdsPage } from './pages/GoogleAdsPage';
 import { MetaReportPage } from './pages/MetaReportPage';
 import { TiktokReportPage } from './pages/TiktokReportPage';
 import { RedditReportPage } from './pages/RedditReportPage';
+import { MicrosoftAdsReportPage } from './pages/MicrosoftAdsReportPage';
 import { CombinedReportPage } from './pages/CombinedReportPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { RolesPermissionsPage } from './pages/RolesPermissionsPage';
@@ -23,13 +24,8 @@ import { TiktokCampaignsReferencePage } from './pages/TiktokCampaignsReferencePa
 import { FacebookCampaignsReferencePage } from './pages/FacebookCampaignsReferencePage';
 import { FacebookAdsetReferencePage } from './pages/FacebookAdsetReferencePage';
 import { ProfilePage } from './pages/ProfilePage';
-import { PlaceholderPage } from './pages/PlaceholderPage';
 import { VimeoAnalyticsPage } from './pages/VimeoAnalyticsPage';
 import { SubscriberIntelligencePage } from './pages/SubscriberIntelligencePage';
-
-const PLACEHOLDER_PAGES = {
-  'bing-ads':     { title: 'Bing Ads', subtitle: 'Microsoft Advertising Performance' },
-};
 
 const PATH_TO_PAGE = {
   '/': 'dashboard',
@@ -68,6 +64,7 @@ function CurrentPage({ forcePage }) {
   if (page === 'meta-ads') return <MetaReportPage />;
   if (page === 'tiktok-ads') return <TiktokReportPage />;
   if (page === 'reddit-ads') return <RedditReportPage />;
+  if (page === 'bing-ads') return <MicrosoftAdsReportPage />;
   if (page === 'combined-reporting') return <CombinedReportPage />;
   if (page === 'settings') return <SettingsPage />;
   if (page === 'roles-permissions') return <RolesPermissionsPage />;
@@ -80,11 +77,6 @@ function CurrentPage({ forcePage }) {
   if (page === 'profile') return <ProfilePage />;
   if (page === 'subscriptions-analytics') return <VimeoAnalyticsPage />;
   if (page === 'subscriptions-subscribers') return <SubscriberIntelligencePage />;
-
-  const config = PLACEHOLDER_PAGES[page];
-  if (config) {
-    return <PlaceholderPage title={config.title} subtitle={config.subtitle} />;
-  }
 
   return <DashboardPage />;
 }

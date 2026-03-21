@@ -3,6 +3,7 @@ import Chart from 'chart.js/auto';
 import { useGoogleAdsData } from '../hooks/useGoogleAdsData';
 import { useMetaCampaignsData } from '../hooks/useMetaCampaignsData';
 import { useRedditReportData } from '../hooks/useRedditReportData';
+import { useMicrosoftAdsReportData } from '../hooks/useMicrosoftAdsReportData';
 import { useTiktokReportData } from '../hooks/useTiktokReportData';
 import { DateRangePicker } from '../components/DatePicker';
 import { exportReportPdf, getDateRangeLabel } from '../utils/exportReportPdf';
@@ -26,6 +27,7 @@ const PLATFORM_OPTIONS = [
   { id: 'google', label: 'Google Ads' },
   { id: 'meta', label: 'Meta Ads' },
   { id: 'reddit', label: 'Reddit Ads' },
+  { id: 'microsoft', label: 'Bing / Microsoft Ads' },
   { id: 'tiktok', label: 'TikTok Ads' },
 ];
 
@@ -61,7 +63,7 @@ function exportCSV(columns, rows, filename) {
   URL.revokeObjectURL(a.href);
 }
 
-function mergeDailyTrends(googleTrends, metaDays, redditTrends, tiktokTrends) {
+function mergeDailyTrends(googleTrends, metaDays, redditTrends, microsoftTrends, tiktokTrends) {
   const map = new Map();
   const add = (arr, dateKey, getVal) => {
     if (!arr || !arr.length) return;
@@ -80,6 +82,7 @@ function mergeDailyTrends(googleTrends, metaDays, redditTrends, tiktokTrends) {
   add(googleTrends, (d) => d.date, (d) => ({ cost: d.cost, impressions: d.impressions, clicks: d.clicks, conversions: d.conversions }));
   add(metaDays, (d) => (d.name || d.key || '').toString().slice(0, 10), (d) => ({ cost: d.cost, impressions: d.impressions, clicks: d.clicks, conversions: d.purchases }));
   add(redditTrends, (d) => (d.date || d.name || '').toString().slice(0, 10), (d) => ({ cost: d.cost, impressions: d.impressions, clicks: d.clicks, conversions: d.conversions }));
+  add(microsoftTrends, (d) => (d.date || d.name || '').toString().slice(0, 10), (d) => ({ cost: d.cost, impressions: d.impressions, clicks: d.clicks, conversions: d.conversions }));
   add(tiktokTrends, (d) => (d.date || d.name || '').toString().slice(0, 10), (d) => ({ cost: d.cost, impressions: d.impressions, clicks: d.clicks, conversions: d.conversions }));
   return [...map.values()]
     .map((d) => ({
@@ -96,10 +99,11 @@ function useCombinedSummary() {
   const google = useGoogleAdsData();
   const meta = useMetaCampaignsData();
   const reddit = useRedditReportData();
+  const microsoft = useMicrosoftAdsReportData();
   const tiktok = useTiktokReportData();
 
-  const loading = google.loading || meta.loading || reddit.loading || tiktok.loading;
-  const errors = [google.error, meta.error, reddit.error, tiktok.error].filter(Boolean);
+  const loading = google.loading || meta.loading || reddit.loading || microsoft.loading || tiktok.loading;
+  const errors = [google.error, meta.error, reddit.error, microsoft.error, tiktok.error].filter(Boolean);
 
   const getConv = (k) => (k && (Number(k.conversions ?? k.purchases ?? 0)));
   const getCost = (k) => (k && Number(k.cost ?? 0));
@@ -143,6 +147,17 @@ function useCombinedSummary() {
       roas: getRoas(reddit.kpis),
     },
     {
+      id: 'microsoft',
+      label: 'Bing / Microsoft Ads',
+      color: '#00809D',
+      cost: getCost(microsoft.kpis),
+      impressions: getImpr(microsoft.kpis),
+      clicks: getClicks(microsoft.kpis),
+      conversions: getConv(microsoft.kpis),
+      cpa: getCpa(microsoft.kpis),
+      roas: getRoas(microsoft.kpis),
+    },
+    {
       id: 'tiktok',
       label: 'TikTok Ads',
       color: '#25F4EE',
@@ -172,8 +187,15 @@ function useCombinedSummary() {
   };
 
   const combinedDailyTrends = useMemo(
-    () => mergeDailyTrends(google.dailyTrends || [], meta.days || [], reddit.dailyTrends || [], tiktok.dailyTrends || []),
-    [google.dailyTrends, meta.days, reddit.dailyTrends, tiktok.dailyTrends]
+    () =>
+      mergeDailyTrends(
+        google.dailyTrends || [],
+        meta.days || [],
+        reddit.dailyTrends || [],
+        microsoft.dailyTrends || [],
+        tiktok.dailyTrends || [],
+      ),
+    [google.dailyTrends, meta.days, reddit.dailyTrends, microsoft.dailyTrends, tiktok.dailyTrends]
   );
 
   return {
@@ -186,35 +208,40 @@ function useCombinedSummary() {
       google: google.countryData || [],
       meta: meta.countries || [],
       reddit: reddit.countryData || [],
+      microsoft: microsoft.countryData || [],
       tiktok: tiktok.countries || [],
     },
     showData: {
       google: google.showsData || [],
       meta: meta.shows || [],
       reddit: reddit.showsData || [],
+      microsoft: microsoft.showsData || [],
       tiktok: tiktok.shows || [],
     },
     productData: {
       google: google.productData || [],
       meta: meta.products || [],
       reddit: reddit.productData || [],
+      microsoft: microsoft.productData || [],
       tiktok: tiktok.products || [],
     },
     refetch: useCallback(() => {
       google.fetchData();
       meta.fetchData();
       reddit.fetchData();
+      microsoft.fetchData();
       tiktok.fetchData();
-    }, [google.fetchData, meta.fetchData, reddit.fetchData, tiktok.fetchData]),
+    }, [google.fetchData, meta.fetchData, reddit.fetchData, microsoft.fetchData, tiktok.fetchData]),
     batchUpdateDate: useCallback(
       ({ preset, dateFrom, dateTo }) => {
         const updates = { datePreset: preset, dateFrom: dateFrom || '', dateTo: dateTo || '' };
         google.batchUpdateFilters(updates);
         meta.batchUpdateFilters(updates);
         reddit.batchUpdateFilters(updates);
+        microsoft.batchUpdateFilters(updates);
         tiktok.batchUpdateFilters(updates);
       },
-      [google.batchUpdateFilters, meta.batchUpdateFilters, reddit.batchUpdateFilters, tiktok.batchUpdateFilters]
+      [google.batchUpdateFilters, meta.batchUpdateFilters, reddit.batchUpdateFilters, microsoft.batchUpdateFilters, tiktok.batchUpdateFilters]
     ),
     filters: google.filters,
   };
@@ -277,10 +304,16 @@ export function CombinedReportPage() {
   const summaryRows = [...rows, totalRow];
   const chartTotals = useMemo(() => computeChartTotals(combinedDailyTrends), [combinedDailyTrends]);
 
-  const platformLabels = { google: 'Google Ads', meta: 'Meta Ads', reddit: 'Reddit Ads', tiktok: 'TikTok Ads' };
+  const platformLabels = {
+    google: 'Google Ads',
+    meta: 'Meta Ads',
+    reddit: 'Reddit Ads',
+    microsoft: 'Bing / Microsoft Ads',
+    tiktok: 'TikTok Ads',
+  };
 
   const countryRows = useMemo(() => {
-    const platforms = platformFilter === 'all' ? ['google', 'meta', 'reddit', 'tiktok'] : [platformFilter];
+    const platforms = platformFilter === 'all' ? ['google', 'meta', 'reddit', 'microsoft', 'tiktok'] : [platformFilter];
     const out = [];
     platforms.forEach((pid) => {
       const arr = countryData[pid] || [];
@@ -307,7 +340,7 @@ export function CombinedReportPage() {
   }, [countryData, platformFilter]);
 
   const showRows = useMemo(() => {
-    const platforms = platformFilter === 'all' ? ['google', 'meta', 'reddit', 'tiktok'] : [platformFilter];
+    const platforms = platformFilter === 'all' ? ['google', 'meta', 'reddit', 'microsoft', 'tiktok'] : [platformFilter];
     const out = [];
     platforms.forEach((pid) => {
       const arr = showData[pid] || [];
@@ -334,7 +367,7 @@ export function CombinedReportPage() {
   }, [showData, platformFilter]);
 
   const productRows = useMemo(() => {
-    const platforms = platformFilter === 'all' ? ['google', 'meta', 'reddit', 'tiktok'] : [platformFilter];
+    const platforms = platformFilter === 'all' ? ['google', 'meta', 'reddit', 'microsoft', 'tiktok'] : [platformFilter];
     const out = [];
     platforms.forEach((pid) => {
       const arr = productData[pid] || [];
@@ -561,7 +594,7 @@ export function CombinedReportPage() {
               </span>
               Combined Reporting
             </h2>
-            <p>Summary of Google Ads, Meta, Reddit & TikTok performance in one view</p>
+            <p>Summary of Google Ads, Meta, Reddit, Bing / Microsoft Ads &amp; TikTok performance in one view</p>
           </div>
           <DateRangePicker
             preset={filters?.datePreset}

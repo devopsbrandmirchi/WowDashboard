@@ -30,6 +30,10 @@ function formatSyncLogStats(platform, meta) {
     const n = meta.report_rows;
     return n != null ? `${n} rows` : '—';
   }
+  if (platform === 'microsoft_ads') {
+    const n = meta.ad_group_rows;
+    return n != null ? `${n} ad group rows` : '—';
+  }
   return '—';
 }
 
@@ -53,6 +57,7 @@ const SETTINGS_NAV = [
   { id: 'google-ads', label: 'Google Ads' },
   { id: 'reddit', label: 'Reddit Ads' },
   { id: 'meta', label: 'Facebook / Meta Ads' },
+  { id: 'microsoft', label: 'Bing / Microsoft Ads' },
   { id: 'tiktok', label: 'TikTok Ads' },
   { id: 'branding', label: 'White Label & Branding' },
 ];
@@ -413,6 +418,21 @@ export function SettingsPage() {
                 syncLogPlatform="facebook_ads"
                 onSync={async (dateFrom, dateTo) => {
                   const { data, error } = await supabase.functions.invoke('fetch-facebook-campaigns-upsert', {
+                    body: { date_from: dateFrom, date_to: dateTo },
+                  });
+                  if (error) throw new Error(error.message || 'Edge function error');
+                  if (data?.error) throw new Error(data.message || data.error);
+                }}
+              />
+            )}
+            {activeNav === 'microsoft' && (
+              <AdsPlatformPanel
+                showNotification={showNotification}
+                title="Bing / Microsoft Ads"
+                connectDescription="OAuth credentials and developer token are configured as Edge Function secrets; sync pulls ad group performance by day into your database."
+                syncLogPlatform="microsoft_ads"
+                onSync={async (dateFrom, dateTo) => {
+                  const { data, error } = await supabase.functions.invoke('sync-microsoft-ads-upsert', {
                     body: { date_from: dateFrom, date_to: dateTo },
                   });
                   if (error) throw new Error(error.message || 'Edge function error');
