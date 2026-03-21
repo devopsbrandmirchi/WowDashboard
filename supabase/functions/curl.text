@@ -1,3 +1,5 @@
+REM If curl shows "URL rejected: Port number": fix JSON quoting or use --data-binary @file.json (PowerShell mangles \" in --data often).
+
 curl.exe -L -X POST "https://icyrctjdskdezbtcoaez.supabase.co/functions/v1/sync-google-ads-data-Edge" -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImljeXJjdGpkc2tkZXpidGNvYWV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4MjIyOTcsImV4cCI6MjA4NzM5ODI5N30.TZ529SpcDhQyCFTl-atee1LQGwLEkGbgUbo31ouxPkI" -H "apikey: sb_publishable_khANcfYsrkCB-qtoLBakfA_HvaV2ORl" -H "Content-Type: application/json" --data "{}"
 
 curl.exe -L -X POST "https://icyrctjdskdezbtcoaez.supabase.co/functions/v1/fetch-facebook-campaigns" -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImljeXJjdGpkc2tkZXpidGNvYWV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4MjIyOTcsImV4cCI6MjA4NzM5ODI5N30.TZ529SpcDhQyCFTl-atee1LQGwLEkGbgUbo31ouxPkI" -H "apikey: sb_publishable_khANcfYsrkCB-qtoLBakfA_HvaV2ORl" -H "Content-Type: application/json" --data "{}"
