@@ -22,6 +22,9 @@ const CORS = {
 const REPORTING_ENDPOINT =
   "https://reporting.api.bingads.microsoft.com/Api/Advertiser/Reporting/v13/ReportingService.svc";
 
+/** Default sync window: this many distinct calendar dates (UTC), ending on the last completed day (yesterday). */
+const DEFAULT_SYNC_DAY_COUNT = 3;
+
 // ─── Env helpers ─────────────────────────────────────────────────────────────
 
 function getEnv(name: string): string {
@@ -529,8 +532,8 @@ Deno.serve(async (req: Request) => {
     const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
 
     // ── Date range ────────────────────────────────────────────────────────
-    // Default: last 3 days. Override via URL params: ?date_from=2025-12-01&date_to=2025-12-31
-    // OR via request body JSON: {"date_from":"2025-12-01","date_to":"2025-12-31"}
+    // Default: last DEFAULT_SYNC_DAY_COUNT UTC calendar days through yesterday (update + insert via upsert below).
+    // Override: ?date_from=2025-12-01&date_to=2025-12-31 or body {"date_from":"...","date_to":"..."}
     let bodyDateFrom = "", bodyDateTo = "";
     try {
       const b = await req.clone().json() as Record<string, string>;
@@ -542,17 +545,25 @@ Deno.serve(async (req: Request) => {
     const fromParam = reqUrl.searchParams.get("date_from") ?? bodyDateFrom;
     const toParam   = reqUrl.searchParams.get("date_to")   ?? bodyDateTo;
 
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    const defaultTo = new Date(today);
-    defaultTo.setUTCDate(today.getUTCDate() - 1);
-    const defaultFrom = new Date(today);
-    defaultFrom.setUTCDate(today.getUTCDate() - 3);
+    const todayUtc = new Date();
+    todayUtc.setUTCHours(0, 0, 0, 0);
+    const defaultDateTo = new Date(todayUtc);
+    defaultDateTo.setUTCDate(todayUtc.getUTCDate() - 1); // yesterday — daily reports complete through prior UTC day
+    const defaultDateFrom = new Date(defaultDateTo);
+    defaultDateFrom.setUTCDate(defaultDateTo.getUTCDate() - (DEFAULT_SYNC_DAY_COUNT - 1)); // inclusive N days ending defaultDateTo
 
-    const dateFrom = fromParam ? new Date(`${fromParam}T00:00:00Z`) : defaultFrom;
-    const dateTo   = toParam   ? new Date(`${toParam}T00:00:00Z`)   : defaultTo;
+    let dateFrom = fromParam ? new Date(`${fromParam}T00:00:00Z`) : defaultDateFrom;
+    let dateTo   = toParam   ? new Date(`${toParam}T00:00:00Z`)   : defaultDateTo;
+    if (dateFrom.getTime() > dateTo.getTime()) {
+      const t = dateFrom;
+      dateFrom = dateTo;
+      dateTo = t;
+    }
 
-    console.log(`[sync-microsoft-ads] Date range: ${dateFrom.toISOString().slice(0,10)} → ${dateTo.toISOString().slice(0,10)}`);
+    const rangeNote = !fromParam && !toParam
+      ? ` (default: last ${DEFAULT_SYNC_DAY_COUNT} UTC calendar days through yesterday)`
+      : "";
+    console.log(`[sync-microsoft-ads] Date range: ${dateFrom.toISOString().slice(0,10)} → ${dateTo.toISOString().slice(0,10)}${rangeNote}`);
 
     // ── OAuth2 token (refresh token flow) ────────────────────────────────
     console.log("[sync-microsoft-ads] Getting access token…");
@@ -661,7 +672,7 @@ Deno.serve(async (req: Request) => {
     const dateFromStr = dateFrom.toISOString().slice(0, 10);
     const dateToStr = dateTo.toISOString().slice(0, 10);
 
-    // ── Upsert Ad Group performance ──────────────────────────────────────
+    // ── Upsert Ad Group performance (existing rows for the same key are updated; new keys are inserted) ──
     const adGroupRows = adGroupRawRows
       .map((r) => toAdGroupRow(r, effectiveAccountId))
       .filter((r): r is Record<string, unknown> => r !== null);
@@ -705,7 +716,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // ── Upsert Placement performance ─────────────────────────────────────
+    // ── Upsert Placement performance (same: update on conflict, insert otherwise) ──
     // Deduplicate by conflict key (account_id, campaign_id, campaign_date, placement)
     // Multiple ad groups can share the same placement URL — sum their metrics.
     const rawPlacementRows = publisherRawRows
@@ -776,7 +787,7 @@ Deno.serve(async (req: Request) => {
       account_id: effectiveAccountId,
       date_from: dateFromStr,
       date_to: dateToStr,
-      inserted: {
+      upserted: {
         ad_group_rows: adGroupRows.length,
         placement_rows: placementRows.length,
       },

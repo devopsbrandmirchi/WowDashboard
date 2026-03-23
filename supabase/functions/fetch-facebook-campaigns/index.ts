@@ -241,6 +241,9 @@ Deno.serve(async (req: Request) => {
       .lte("day", dateToStr)
       .eq("account_id", accountId);
 
+    const { error: seqErr } = await supabase.rpc("reset_facebook_campaigns_data_sequence");
+    if (seqErr) console.warn("[fetch-facebook-campaigns] Identity sequence reset failed:", seqErr.message);
+
     const BATCH = 500;
     const stripId = <T extends Record<string, unknown>>(row: T): Omit<T, "id" | "created_at"> => {
       const { id: _id, created_at: _ca, ...rest } = row;

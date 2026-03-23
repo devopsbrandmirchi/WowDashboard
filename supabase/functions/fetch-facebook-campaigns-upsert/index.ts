@@ -251,6 +251,9 @@ Deno.serve(async (req: Request) => {
     console.log(LOG, "insights", insights.length, "rows", uniqueRows.length);
 
     const supabase = createClient(getEnv("SUPABASE_URL"), getEnv("SUPABASE_SERVICE_ROLE_KEY"));
+    const { error: seqErr } = await supabase.rpc("reset_facebook_campaigns_data_sequence");
+    if (seqErr) console.warn(LOG, "facebook_campaigns_data sequence", seqErr.message);
+
     const BATCH = 500;
     const stripId = <T extends Record<string, unknown>>(row: T) => {
       const { id: _i, created_at: _c, ...rest } = row;
