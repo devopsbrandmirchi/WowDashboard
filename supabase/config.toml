@@ -1,0 +1,18 @@
+# Edge Function gateway JWT checks reject some valid tokens (e.g. publishable-only clients, ES256 user JWTs).
+# These sync endpoints are still protected by secrets inside each function (service role, OAuth, etc.).
+# Redeploy functions after changing this file: supabase functions deploy <name>
+
+[functions.sync-google-ads-upsert]
+verify_jwt = false
+
+[functions.fetch-reddit-campaigns-upsert]
+verify_jwt = false
+
+[functions.fetch-facebook-campaigns-upsert]
+verify_jwt = false
+
+[functions.fetch-tiktok-campaigns-upsert]
+verify_jwt = false
+
+[functions.sync-microsoft-ads]
+verify_jwt = false

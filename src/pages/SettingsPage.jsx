@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
-import { supabase } from '../lib/supabase.js';
+import { supabase, invokeEdgeFunction } from '../lib/supabase.js';
 
 function formatSyncLogStats(platform, meta) {
   if (!meta || typeof meta !== 'object') return '—';
@@ -30,6 +30,12 @@ function formatSyncLogStats(platform, meta) {
     const n = meta.report_rows;
     return n != null ? `${n} rows` : '—';
   }
+  if (platform === 'microsoft_ads') {
+    const a = meta.ad_group_rows;
+    const p = meta.placement_rows;
+    if (a != null || p != null) return `${a ?? 0} ad grp / ${p ?? 0} placement`;
+    return '—';
+  }
   return '—';
 }
 
@@ -54,10 +60,11 @@ const SETTINGS_NAV = [
   { id: 'reddit', label: 'Reddit Ads' },
   { id: 'meta', label: 'Facebook / Meta Ads' },
   { id: 'tiktok', label: 'TikTok Ads' },
+  { id: 'bing', label: 'Bing / Microsoft Ads' },
   { id: 'branding', label: 'White Label & Branding' },
 ];
 
-/** Same UX for Google, Reddit, Meta, TikTok: Connect → date range + Sync; optional ads_sync_by_date_log table */
+/** Same UX for Google, Reddit, Meta, TikTok, Microsoft: Connect → date range + Sync; optional ads_sync_by_date_log table */
 function AdsPlatformPanel({ showNotification, title, connectDescription, onSync, syncLogPlatform }) {
   const [connected, setConnected] = useState(true);
   const [startDate, setStartDate] = useState('');
@@ -382,8 +389,9 @@ export function SettingsPage() {
                 connectDescription="Connect your Google Ads manager account to sync campaigns and metrics."
                 syncLogPlatform="google_ads"
                 onSync={async (dateFrom, dateTo) => {
-                  const { data, error } = await supabase.functions.invoke('sync-google-ads-upsert', {
-                    body: { date_from: dateFrom, date_to: dateTo },
+                  const { data, error } = await invokeEdgeFunction('sync-google-ads-upsert', {
+                    date_from: dateFrom,
+                    date_to: dateTo,
                   });
                   if (error) throw new Error(error.message || 'Edge function error');
                   if (data?.error) throw new Error(data.message || data.error);
@@ -397,8 +405,9 @@ export function SettingsPage() {
                 connectDescription="Connect your Reddit Ads account to pull spend and conversion data into reports."
                 syncLogPlatform="reddit_ads"
                 onSync={async (dateFrom, dateTo) => {
-                  const { data, error } = await supabase.functions.invoke('fetch-reddit-campaigns-upsert', {
-                    body: { date_from: dateFrom, date_to: dateTo },
+                  const { data, error } = await invokeEdgeFunction('fetch-reddit-campaigns-upsert', {
+                    date_from: dateFrom,
+                    date_to: dateTo,
                   });
                   if (error) throw new Error(error.message || 'Edge function error');
                   if (data?.error) throw new Error(data.message || data.error);
@@ -412,8 +421,9 @@ export function SettingsPage() {
                 connectDescription="Link Meta Business Manager to sync campaign performance across your client accounts."
                 syncLogPlatform="facebook_ads"
                 onSync={async (dateFrom, dateTo) => {
-                  const { data, error } = await supabase.functions.invoke('fetch-facebook-campaigns-upsert', {
-                    body: { date_from: dateFrom, date_to: dateTo },
+                  const { data, error } = await invokeEdgeFunction('fetch-facebook-campaigns-upsert', {
+                    date_from: dateFrom,
+                    date_to: dateTo,
                   });
                   if (error) throw new Error(error.message || 'Edge function error');
                   if (data?.error) throw new Error(data.message || data.error);
@@ -427,8 +437,25 @@ export function SettingsPage() {
                 connectDescription="Connect your TikTok For Business advertiser account to sync campaigns and performance into reports."
                 syncLogPlatform="tiktok_ads"
                 onSync={async (dateFrom, dateTo) => {
-                  const { data, error } = await supabase.functions.invoke('fetch-tiktok-campaigns-upsert', {
-                    body: { date_from: dateFrom, date_to: dateTo },
+                  const { data, error } = await invokeEdgeFunction('fetch-tiktok-campaigns-upsert', {
+                    date_from: dateFrom,
+                    date_to: dateTo,
+                  });
+                  if (error) throw new Error(error.message || 'Edge function error');
+                  if (data?.error) throw new Error(data.message || data.error);
+                }}
+              />
+            )}
+            {activeNav === 'bing' && (
+              <AdsPlatformPanel
+                showNotification={showNotification}
+                title="Bing / Microsoft Ads"
+                connectDescription="Connect your Microsoft Advertising account to sync campaigns, placements, and metrics into reports."
+                syncLogPlatform="microsoft_ads"
+                onSync={async (dateFrom, dateTo) => {
+                  const { data, error } = await invokeEdgeFunction('sync-microsoft-ads', {
+                    date_from: dateFrom,
+                    date_to: dateTo,
                   });
                   if (error) throw new Error(error.message || 'Edge function error');
                   if (data?.error) throw new Error(data.message || data.error);

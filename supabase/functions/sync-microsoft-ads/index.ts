@@ -768,12 +768,22 @@ Deno.serve(async (req: Request) => {
       .from("microsoft_ads_sync_by_date")
       .upsert(syncLogRows, { onConflict: "account_id,segment_date" });
 
-    // Also log to the platform-wide ads_sync_by_date_log table
+    // Also log to the platform-wide ads_sync_by_date_log table (run_id + metadata required for UI sync log)
+    const syncedAtLog = new Date().toISOString();
+    const runId = crypto.randomUUID();
+    const logMeta = {
+      ad_group_rows: adGroupRows.length,
+      placement_rows: placementRows.length,
+    };
     const logRows = syncDates.map((segment_date) => ({
       platform: "microsoft_ads",
       account_id: effectiveAccountId,
       segment_date,
-      synced_at: new Date().toISOString(),
+      synced_at: syncedAtLog,
+      run_id: runId,
+      date_range_start: dateFromStr,
+      date_range_end: dateToStr,
+      metadata: logMeta,
     }));
     await supabase
       .from("ads_sync_by_date_log")
