@@ -178,6 +178,12 @@ function eachDateInRange(fromStr: string, toStr: string): string[] {
   return out;
 }
 
+function isMissingTableError(message: string, tableName: string): boolean {
+  const m = message.toLowerCase();
+  const t = tableName.toLowerCase();
+  return m.includes("could not find the table") && m.includes(t) && m.includes("schema cache");
+}
+
 Deno.serve(async (req: Request) => {
   console.log(LOG, new Date().toISOString());
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -285,12 +291,20 @@ Deno.serve(async (req: Request) => {
     const syncedAt = new Date().toISOString();
     const rangeDates = eachDateInRange(dateFromStr, dateToStr);
     const hist = rangeDates.map((segment_date) => ({ account_id: accountId, segment_date, synced_at: syncedAt }));
+    let historyWritten = false;
     for (let i = 0; i < hist.length; i += BATCH) {
       const { error } = await supabase.from("facebook_ads_sync_by_date").upsert(hist.slice(i, i + BATCH), {
         onConflict: "account_id,segment_date",
         ignoreDuplicates: false,
       });
-      if (error) throw new Error(`facebook_ads_sync_by_date: ${error.message}`);
+      if (error) {
+        if (isMissingTableError(error.message, "facebook_ads_sync_by_date")) {
+          console.warn(LOG, "sync history table missing; skipping facebook_ads_sync_by_date writes");
+          break;
+        }
+        throw new Error(`facebook_ads_sync_by_date: ${error.message}`);
+      }
+      historyWritten = true;
     }
 
     const runId = crypto.randomUUID();
@@ -305,9 +319,21 @@ Deno.serve(async (req: Request) => {
       date_range_end: dateToStr,
       metadata: logMeta,
     }));
-    for (let i = 0; i < logRows.length; i += BATCH) {
-      const { error: logErr } = await supabase.from("ads_sync_by_date_log").insert(logRows.slice(i, i + BATCH));
-      if (logErr) throw new Error(`ads_sync_by_date_log: ${logErr.message}`);
+    let logWritten = false;
+    if (historyWritten) {
+      for (let i = 0; i < logRows.length; i += BATCH) {
+        const { error: logErr } = await supabase.from("ads_sync_by_date_log").insert(logRows.slice(i, i + BATCH));
+        if (logErr) {
+          if (isMissingTableError(logErr.message, "ads_sync_by_date_log")) {
+            console.warn(LOG, "ads sync log table missing; skipping ads_sync_by_date_log writes");
+            break;
+          }
+          throw new Error(`ads_sync_by_date_log: ${logErr.message}`);
+        }
+        logWritten = true;
+      }
+    } else {
+      console.warn(LOG, "history not written; skipping ads_sync_by_date_log writes");
     }
 
     const result = {
@@ -317,7 +343,10 @@ Deno.serve(async (req: Request) => {
       date_from: dateFromStr,
       date_to: dateToStr,
       upserted: { rows: uniqueRows.length },
-      sync_history_rows: hist.length,
+      sync_history_rows: historyWritten ? hist.length : 0,
+      sync_history_skipped: !historyWritten,
+      ads_sync_log_rows: logWritten ? logRows.length : 0,
+      ads_sync_log_skipped: !logWritten,
       run_id: runId,
     };
     console.log(LOG, JSON.stringify(result));
