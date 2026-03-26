@@ -270,8 +270,6 @@ Deno.serve(async (req: Request) => {
           const agid = String(r.ad_group_id ?? "");
           adGroupRows.push({
             account_id: accountId,
-            campaign_id: cid || null,
-            ad_group_id: agid || null,
             campaign_name: campaignNames[cid] ?? null,
             ad_group_name: adGroupNames[agid] ?? null,
             campaign_date: String(r.date).slice(0, 10),

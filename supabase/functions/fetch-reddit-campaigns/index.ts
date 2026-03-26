@@ -148,11 +148,11 @@ function centDiv(v: unknown): number | null {
   return n != null ? Math.round(n / 100 * 100) / 100 : null;
 }
 
-/** Dedupe ad_group rows by (campaign_date, campaign_name, ad_group_name), summing metrics. */
+/** Dedupe ad_group rows by (account_id, campaign_date, campaign_name, ad_group_name), summing metrics. */
 function dedupeAdGroupRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
   const map = new Map<string, Record<string, unknown>>();
   for (const r of rows) {
-    const key = `${r.campaign_date}|${r.campaign_name ?? ""}|${r.ad_group_name ?? ""}`;
+    const key = `${r.account_id ?? ""}|${r.campaign_date}|${r.campaign_name ?? ""}|${r.ad_group_name ?? ""}`;
     const existing = map.get(key);
     if (!existing) {
       map.set(key, { ...r });
@@ -170,11 +170,11 @@ function dedupeAdGroupRows(rows: Record<string, unknown>[]): Record<string, unkn
   return Array.from(map.values());
 }
 
-/** Dedupe placement rows by (campaign_date, campaign_name, placement), summing metrics. */
+/** Dedupe placement rows to match unique index (account_id, campaign_id, campaign_date, placement). */
 function dedupePlacementRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
   const map = new Map<string, Record<string, unknown>>();
   for (const r of rows) {
-    const key = `${r.campaign_date}|${r.campaign_name ?? ""}|${r.placement ?? ""}`;
+    const key = `${r.account_id ?? ""}|${r.campaign_id ?? ""}|${r.campaign_date}|${r.placement ?? ""}`;
     const existing = map.get(key);
     if (!existing) {
       map.set(key, { ...r });
@@ -239,6 +239,7 @@ Deno.serve(async (req: Request) => {
         for (const r of rows) {
           if (!r.date) continue;
           adGroupRows.push({
+            account_id: accountId,
             campaign_name: campaignNames[String(r.campaign_id)] ?? null,
             ad_group_name: adGroupNames[String(r.ad_group_id)] ?? null,
             campaign_date: String(r.date).slice(0, 10),
@@ -259,8 +260,11 @@ Deno.serve(async (req: Request) => {
         const rows = await fetchReport(accessToken, accountId, dateStr, ["DATE", "CAMPAIGN_ID", "PLACEMENT"]);
         for (const r of rows) {
           if (!r.date || !r.placement) continue;
+          const cid = String(r.campaign_id ?? "");
           placementRows.push({
-            campaign_name: campaignNames[String(r.campaign_id)] ?? null,
+            account_id: accountId,
+            campaign_id: cid || null,
+            name: campaignNames[cid] ?? null,
             placement: String(r.placement),
             campaign_date: String(r.date).slice(0, 10),
             impressions: num(r.impressions),
@@ -269,7 +273,6 @@ Deno.serve(async (req: Request) => {
             purchase_view: num(r.conversion_purchase_views),
             purchase_click: num(r.conversion_purchase_clicks),
             total_value_purchase: centDiv(r.conversion_purchase_total_value),
-            currency: "USD",
           });
         }
       } catch (e) {
@@ -282,17 +285,19 @@ Deno.serve(async (req: Request) => {
     }
 
     const dedupedAdGroup = dedupeAdGroupRows(adGroupRows);
-    const dedupedPlacement = dedupePlacementRows(placementRows);
+    const dedupedPlacement = dedupePlacementRows(placementRows).filter((r) => r.campaign_id);
 
     await supabase
       .from("reddit_campaigns_ad_group")
       .delete()
+      .eq("account_id", accountId)
       .gte("campaign_date", dateFromStr)
       .lte("campaign_date", dateToStr);
 
     await supabase
       .from("reddit_campaigns_placement")
       .delete()
+      .eq("account_id", accountId)
       .gte("campaign_date", dateFromStr)
       .lte("campaign_date", dateToStr);
 
