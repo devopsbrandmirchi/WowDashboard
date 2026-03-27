@@ -293,7 +293,6 @@ Deno.serve(async (req: Request) => {
           placementRows.push({
             account_id: accountId,
             campaign_id: cid || null,
-            name: campaignNames[cid] ?? null,
             placement: String(r.placement),
             campaign_date: String(r.date).slice(0, 10),
             impressions: num(r.impressions),
