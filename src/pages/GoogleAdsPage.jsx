@@ -38,12 +38,29 @@ const CHART_METRICS = [
 const statusBadge = (s) => s === 'ENABLED' ? 'badge-green' : s === 'PAUSED' ? 'badge-yellow' : 'badge-red';
 const statusLabel = (s) => s === 'ENABLED' ? 'Enabled' : s === 'PAUSED' ? 'Paused' : s ? s.charAt(0) + s.slice(1).toLowerCase() : '';
 const clamp = { maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const toNum = (v) => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  if (typeof v === 'string') {
+    const n = Number(v.replace(/,/g, '').trim());
+    return Number.isFinite(n) ? n : 0;
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
 
 function computeTotals(rows) {
   const t = { _isTotal: true, cost: 0, clicks: 0, impressions: 0, conversions: 0, allConversions: 0, campaign_count: 0, spend_pct: 100 };
-  rows.forEach((r) => { t.cost += r.cost || 0; t.clicks += r.clicks || 0; t.impressions += r.impressions || 0; t.conversions += r.conversions || 0; t.allConversions += r.allConversions || 0; t.campaign_count += r.campaign_count || 0; });
+  rows.forEach((r) => {
+    t.cost += toNum(r.cost);
+    t.clicks += toNum(r.clicks);
+    t.impressions += toNum(r.impressions);
+    t.conversions += toNum(r.conversions);
+    t.allConversions += toNum(r.allConversions);
+    t.campaign_count += toNum(r.campaign_count);
+  });
   t.ctr = t.impressions ? (t.clicks / t.impressions) * 100 : 0;
   t.cpc = t.clicks ? t.cost / t.clicks : 0;
+  t.cpm = toNum(t.impressions) > 0 ? (toNum(t.cost) / toNum(t.impressions)) * 1000 : 0;
   t.conv_rate = t.clicks ? (t.conversions / t.clicks) * 100 : 0;
   t.cpa = t.conversions ? t.cost / t.conversions : 0;
   return t;
@@ -54,6 +71,7 @@ const SUM_FIELDS = ['cost', 'clicks', 'impressions', 'conversions', 'allConversi
 function recalcDerived(o) {
   o.ctr = o.impressions ? (o.clicks / o.impressions) * 100 : 0;
   o.cpc = o.clicks ? o.cost / o.clicks : 0;
+  o.cpm = toNum(o.impressions) > 0 ? (toNum(o.cost) / toNum(o.impressions)) * 1000 : 0;
   o.conv_rate = o.clicks ? (o.conversions / o.clicks) * 100 : 0;
   o.cpa = o.conversions ? o.cost / o.conversions : 0;
   o.roas = o.cost ? (o.conversions_value || 0) / o.cost : 0;
@@ -63,7 +81,7 @@ function recalcDerived(o) {
 function pivotAggregate(rows, allColumns, visibleColumns) {
   const dimCols = allColumns.filter((c) => c.dim);
   const hiddenDims = dimCols.filter((c) => !visibleColumns.find((vc) => vc.col === c.col));
-  if (!hiddenDims.length) return rows;
+  if (!hiddenDims.length) return rows.map((r) => recalcDerived({ ...r }));
 
   const visibleDimKeys = dimCols
     .filter((c) => visibleColumns.find((vc) => vc.col === c.col))
@@ -82,12 +100,12 @@ function pivotAggregate(rows, allColumns, visibleColumns) {
       map.set(groupKey, seed);
     }
     const agg = map.get(groupKey);
-    SUM_FIELDS.forEach((k) => { agg[k] += (r[k] || 0); });
+    SUM_FIELDS.forEach((k) => { agg[k] += toNum(r[k]); });
     agg._count++;
   });
 
   const result = [...map.values()].map(recalcDerived);
-  const totalCost = result.reduce((s, r) => s + (r.cost || 0), 0);
+  const totalCost = result.reduce((s, r) => s + toNum(r.cost), 0);
   if (totalCost > 0) result.forEach((r) => { r.spend_pct = (r.cost / totalCost) * 100; });
   return result;
 }
@@ -263,7 +281,12 @@ export function GoogleAdsPage() {
   const computeChartTotals = (trends) => {
     if (!trends.length) return {};
     const sums = { cost: 0, clicks: 0, impressions: 0, conversions: 0 };
-    trends.forEach((d) => { sums.cost += d.cost || 0; sums.clicks += d.clicks || 0; sums.impressions += d.impressions || 0; sums.conversions += d.conversions || 0; });
+    trends.forEach((d) => {
+      sums.cost += toNum(d.cost);
+      sums.clicks += toNum(d.clicks);
+      sums.impressions += toNum(d.impressions);
+      sums.conversions += toNum(d.conversions);
+    });
     return {
       cost: sums.cost,
       impressions: sums.impressions,
@@ -271,6 +294,7 @@ export function GoogleAdsPage() {
       conversions: sums.conversions,
       ctr: sums.impressions ? (sums.clicks / sums.impressions) * 100 : 0,
       cpc: sums.clicks ? sums.cost / sums.clicks : 0,
+      cpm: toNum(sums.impressions) > 0 ? (toNum(sums.cost) / toNum(sums.impressions)) * 1000 : 0,
       conv_rate: sums.clicks ? (sums.conversions / sums.clicks) * 100 : 0,
       cpa: sums.conversions ? sums.cost / sums.conversions : 0,
     };
@@ -321,11 +345,12 @@ export function GoogleAdsPage() {
   const campaignTypeCols = [
     { col: 'type', label: 'Campaign Type', dim: true, cell: (r) => <span className="badge badge-blue">{r.type}</span>, total: () => 'Total' },
     { col: 'campaign_count', label: '# Campaigns', align: 'r', cell: (r) => fI(r.campaign_count), total: (t) => fI(t.campaign_count) },
+    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
     { col: 'impressions', label: 'Impr.', align: 'r', cell: (r) => fI(r.impressions), total: (t) => fI(t.impressions) },
     { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => fI(t.clicks) },
     { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => fP(t.ctr) },
     { col: 'cpc', label: 'Avg CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => fU(t.cpc) },
-    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
+    { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => fU(t.cpm) },
     { col: 'conversions', label: 'Conv.', align: 'r', cell: (r) => fI(r.conversions), total: (t) => fI(t.conversions) },
     { col: 'conv_rate', label: 'Conv. Rate', align: 'r', cell: (r) => fP(r.conv_rate), total: (t) => fP(t.conv_rate) },
     { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => fU(t.cpa) },
@@ -337,14 +362,15 @@ export function GoogleAdsPage() {
     { col: 'campaign_name', label: 'Campaign Name', dim: true, clamp: true, cell: (r) => r.campaign_name, total: () => 'Total' },
     { col: 'channel_type', label: 'Type', dim: true, cell: (r) => <span className="badge badge-blue">{r.channel_type}</span>, total: () => '' },
     { col: 'campaign_status', label: 'Status', dim: true, cell: (r) => <span className={`badge ${statusBadge(r.campaign_status)}`}>{statusLabel(r.campaign_status)}</span>, total: () => '' },
+    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
     { col: 'impressions', label: 'Impr.', align: 'r', cell: (r) => fI(r.impressions), total: (t) => fI(t.impressions) },
     { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => fI(t.clicks) },
     { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => fP(t.ctr) },
     { col: 'cpc', label: 'Avg CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => fU(t.cpc) },
-    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
+    { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => fU(t.cpm) },
     { col: 'conversions', label: 'Conv.', align: 'r', cell: (r) => fI(r.conversions), total: (t) => fI(t.conversions) },
-    { col: 'conv_rate', label: 'Conv. Rate', align: 'r', cell: (r) => fP(r.conv_rate), total: (t) => fP(t.conv_rate) },
     { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => fU(t.cpa) },
+    { col: 'conv_rate', label: 'Conv. Rate', align: 'r', cell: (r) => fP(r.conv_rate), total: (t) => fP(t.conv_rate) },
   ];
 
   /* ── Ad Group Columns ── */
@@ -352,11 +378,12 @@ export function GoogleAdsPage() {
     { col: 'campaign_name', label: 'Campaign', dim: true, clamp: true, cell: (r) => r.campaign_name, total: () => 'Total' },
     { col: 'ad_group_name', label: 'Ad Group', dim: true, clamp: true, cell: (r) => r.ad_group_name, total: () => '' },
     { col: 'ad_group_status', label: 'Status', dim: true, cell: (r) => <span className={`badge ${statusBadge(r.ad_group_status)}`}>{statusLabel(r.ad_group_status)}</span>, total: () => '' },
+    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
     { col: 'impressions', label: 'Impr.', align: 'r', cell: (r) => fI(r.impressions), total: (t) => fI(t.impressions) },
     { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => fI(t.clicks) },
     { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => fP(t.ctr) },
     { col: 'cpc', label: 'Avg CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => fU(t.cpc) },
-    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
+    { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => fU(t.cpm) },
     { col: 'conversions', label: 'Conv.', align: 'r', cell: (r) => fI(r.conversions), total: (t) => fI(t.conversions) },
     { col: 'conv_rate', label: 'Conv. Rate', align: 'r', cell: (r) => fP(r.conv_rate), total: (t) => fP(t.conv_rate) },
     { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => fU(t.cpa) },
@@ -367,11 +394,12 @@ export function GoogleAdsPage() {
     { col: 'keyword_text', label: 'Keyword', dim: true, clamp: true, cell: (r) => r.keyword_text, total: () => 'Total' },
     { col: 'campaign_name', label: 'Campaign', dim: true, clamp: true, cell: (r) => r.campaign_name || '', total: () => '' },
     { col: 'keyword_match_type', label: 'Match Type', dim: true, cell: (r) => <span className="badge badge-blue">{r.keyword_match_type}</span>, total: () => '' },
+    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
     { col: 'impressions', label: 'Impr.', align: 'r', cell: (r) => fI(r.impressions), total: (t) => fI(t.impressions) },
     { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => fI(t.clicks) },
     { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => fP(t.ctr) },
     { col: 'cpc', label: 'Avg CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => fU(t.cpc) },
-    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
+    { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => fU(t.cpm) },
     { col: 'conversions', label: 'Conv.', align: 'r', cell: (r) => fI(r.conversions), total: (t) => fI(t.conversions) },
     { col: 'conv_rate', label: 'Conv. Rate', align: 'r', cell: (r) => fP(r.conv_rate), total: (t) => fP(t.conv_rate) },
     { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => fU(t.cpa) },
@@ -380,11 +408,12 @@ export function GoogleAdsPage() {
   /* ── Geo Columns ── */
   const geoCols = [
     { col: 'location', label: 'Location', dim: true, cell: (r) => r.location, total: () => 'Total' },
+    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
     { col: 'impressions', label: 'Impr.', align: 'r', cell: (r) => fI(r.impressions), total: (t) => fI(t.impressions) },
     { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => fI(t.clicks) },
     { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => fP(t.ctr) },
     { col: 'cpc', label: 'Avg CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => fU(t.cpc) },
-    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
+    { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => fU(t.cpm) },
     { col: 'conversions', label: 'Conv.', align: 'r', cell: (r) => fI(r.conversions), total: (t) => fI(t.conversions) },
     { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => fU(t.cpa) },
   ];
@@ -392,11 +421,12 @@ export function GoogleAdsPage() {
   /* ── Country / Product / Shows Columns (ref data, same metrics as Geo) ── */
   const refDimCols = (nameLabel, nameCol = 'name') => [
     { col: nameCol, label: nameLabel, dim: true, clamp: true, cell: (r) => r[nameCol], total: () => 'Total' },
+    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
     { col: 'impressions', label: 'Impr.', align: 'r', cell: (r) => fI(r.impressions), total: (t) => fI(t.impressions) },
     { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => fI(t.clicks) },
     { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => fP(t.ctr) },
     { col: 'cpc', label: 'Avg CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => fU(t.cpc) },
-    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
+    { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => fU(t.cpm) },
     { col: 'conversions', label: 'Conv.', align: 'r', cell: (r) => fI(r.conversions), total: (t) => fI(t.conversions) },
     { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => fU(t.cpa) },
   ];
@@ -417,11 +447,12 @@ export function GoogleAdsPage() {
   };
   const dayCols = [
     { col: 'date', label: 'Day', dim: true, cell: (r) => formatDayDisplay(r.date), total: () => 'Total' },
+    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
     { col: 'impressions', label: 'Impr.', align: 'r', cell: (r) => fI(r.impressions), total: (t) => fI(t.impressions) },
     { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => fI(t.clicks) },
     { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => fP(t.ctr) },
     { col: 'cpc', label: 'Avg CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => fU(t.cpc) },
-    { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
+    { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => fU(t.cpm) },
     { col: 'conversions', label: 'Conv.', align: 'r', cell: (r) => fI(r.conversions), total: (t) => fI(t.conversions) },
     { col: 'conv_rate', label: 'Conv. Rate', align: 'r', cell: (r) => fP(r.conv_rate), total: (t) => t ? fP(t.conv_rate) : '' },
     { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => fU(t.cpa) },
@@ -494,7 +525,7 @@ export function GoogleAdsPage() {
   const campaignSubRows = (campaign, visibleCols) => {
     const subAgs = adGroups.filter((ag) => String(ag.campaign_id) === String(campaign.campaign_id));
     if (!subAgs.length) return <tr className="gads-sub-wrap"><td colSpan={visibleCols.length} className="gads-empty-cell">No ad groups found</td></tr>;
-    const metricKeys = new Set(['impressions', 'clicks', 'ctr', 'cpc', 'cost', 'conversions', 'conv_rate', 'cpa', 'allConversions', 'spend_pct']);
+    const metricKeys = new Set(['impressions', 'clicks', 'ctr', 'cpc', 'cpm', 'cost', 'conversions', 'conv_rate', 'cpa', 'allConversions', 'spend_pct']);
     return subAgs.map((ag) => (
       <tr key={ag.ad_group_id} className="gads-sub-row">
         {visibleCols.map((c, ci) => (
@@ -510,7 +541,7 @@ export function GoogleAdsPage() {
   const adGroupSubRows = (ag, visibleCols) => {
     const subKws = keywords.filter((k) => String(k.ad_group_id) === String(ag.ad_group_id));
     if (!subKws.length) return <tr className="gads-sub-wrap"><td colSpan={visibleCols.length} className="gads-empty-cell">No keywords found</td></tr>;
-    const metricKeys = new Set(['impressions', 'clicks', 'ctr', 'cpc', 'cost', 'conversions', 'conv_rate', 'cpa']);
+    const metricKeys = new Set(['impressions', 'clicks', 'ctr', 'cpc', 'cpm', 'cost', 'conversions', 'conv_rate', 'cpa']);
     return subKws.map((kw) => (
       <tr key={kw._key || kw.criterion_id} className="gads-sub-row">
         {visibleCols.map((c, ci) => (

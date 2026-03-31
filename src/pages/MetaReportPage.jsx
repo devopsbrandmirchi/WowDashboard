@@ -115,15 +115,14 @@ function Pagination({ info, onPage }) {
 const clamp = { maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 
 const METRIC_COLS = [
-  { col: 'impressions', label: 'Impressions', align: 'r', cell: (r) => fI(r.impressions), total: (t) => t ? fI(t.impressions) : '' },
-  { col: 'reach', label: 'Reach', align: 'r', cell: (r) => fI(r.reach), total: (t) => t ? fI(t.reach) : '' },
-  { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => t ? fI(t.clicks) : '' },
   { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => t ? fU(t.cost) : '' },
-  { col: 'purchases', label: 'Purchases', align: 'r', cell: (r) => fI(r.purchases), total: (t) => t ? fI(t.purchases) : '' },
-  { col: 'revenue', label: 'Revenue', align: 'r', cell: (r) => fU(r.revenue), total: (t) => t ? fU(t.revenue) : '' },
+  { col: 'impressions', label: 'Impressions', align: 'r', cell: (r) => fI(r.impressions), total: (t) => t ? fI(t.impressions) : '' },
+  { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => t ? fI(t.clicks) : '' },
+  { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => t ? fP(t.ctr) : '' },
   { col: 'cpc', label: 'CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => t ? fU(t.cpc) : '' },
   { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => t ? fU(t.cpm) : '' },
-  { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => t ? fP(t.ctr) : '' },
+  { col: 'reach', label: 'Reach', align: 'r', cell: (r) => fI(r.reach), total: (t) => t ? fI(t.reach) : '' },
+  { col: 'purchases', label: 'Purchases', align: 'r', cell: (r) => fI(r.purchases), total: (t) => t ? fI(t.purchases) : '' },
 ];
 
 const META_KPI_LABELS = [
