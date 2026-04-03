@@ -188,11 +188,12 @@ Deno.serve(async (req: Request) => {
     const supabaseUrl = getEnv("SUPABASE_URL");
     const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
 
+    // Last 5 full days ending yesterday (excludes incomplete today); delete+insert for that window refreshes metrics and drops stale rows
     const now = new Date();
     const dateTo = new Date(now);
     dateTo.setDate(dateTo.getDate() - 1);
     const dateFrom = new Date(now);
-    dateFrom.setDate(dateFrom.getDate() - 2);
+    dateFrom.setDate(dateFrom.getDate() - 5);
     const dateFromStr = dateFrom.toISOString().slice(0, 10);
     const dateToStr = dateTo.toISOString().slice(0, 10);
 
