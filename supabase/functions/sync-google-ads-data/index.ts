@@ -202,12 +202,13 @@ function toCampaignRow(r: Record<string, unknown>, customerId: string, customerN
   };
 }
 
-function toAdGroupRow(r: Record<string, unknown>): Record<string, unknown> {
+function toAdGroupRow(r: Record<string, unknown>, customerId: string): Record<string, unknown> {
   const campaign = (r.campaign as Record<string, unknown>) ?? {};
   const adGroup = (r.adGroup as Record<string, unknown>) ?? {};
   const segments = (r.segments as Record<string, unknown>) ?? {};
   const metrics = (r.metrics as Record<string, unknown>) ?? {};
   return {
+    customer_id: customerId,
     campaign_id: campaign.id ?? null,
     campaign_name: (campaign.name as string) ?? null,
     ad_group_id: adGroup.id ?? null,
@@ -221,7 +222,7 @@ function toAdGroupRow(r: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-function toKeywordRow(r: Record<string, unknown>): Record<string, unknown> {
+function toKeywordRow(r: Record<string, unknown>, customerId: string): Record<string, unknown> {
   const campaign = (r.campaign as Record<string, unknown>) ?? {};
   const adGroup = (r.adGroup as Record<string, unknown>) ?? {};
   const adGroupCriterion = (r.adGroupCriterion as Record<string, unknown>) ?? {};
@@ -229,6 +230,7 @@ function toKeywordRow(r: Record<string, unknown>): Record<string, unknown> {
   const segments = (r.segments as Record<string, unknown>) ?? {};
   const metrics = (r.metrics as Record<string, unknown>) ?? {};
   return {
+    customer_id: customerId,
     campaign_id: campaign.id ?? null,
     ad_group_id: adGroup.id ?? null,
     criterion_id: adGroupCriterion.criterionId ?? null,
@@ -275,12 +277,12 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Date range: last 2 days (yesterday and the day before)
+    // Date range: last 5 days (ending yesterday; excludes incomplete today)
     const now = new Date();
     const dateTo = new Date(now);
     dateTo.setDate(dateTo.getDate() - 1);
     const dateFrom = new Date(now);
-    dateFrom.setDate(dateFrom.getDate() - 2);
+    dateFrom.setDate(dateFrom.getDate() - 5);
     const dateFromStr = dateFrom.toISOString().slice(0, 10);
     const dateToStr = dateTo.toISOString().slice(0, 10);
 
@@ -380,8 +382,12 @@ Deno.serve(async (req: Request) => {
       for (const r of campaignRows) {
         allCampaignRows.push({ ...r, __customerId: customer.id, __customerName: customer.name });
       }
-      allAdGroupRows.push(...adGroupRows);
-      allKeywordRows.push(...keywordRows);
+      for (const r of adGroupRows) {
+        allAdGroupRows.push({ ...r, __customerId: customer.id });
+      }
+      for (const r of keywordRows) {
+        allKeywordRows.push({ ...r, __customerId: customer.id });
+      }
     }
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
@@ -390,11 +396,17 @@ Deno.serve(async (req: Request) => {
       const { __customerId, __customerName, ...rest } = r as Record<string, unknown> & { __customerId: string; __customerName: string };
       return toCampaignRow(rest, __customerId, __customerName);
     });
-    const adGroupsPayload = allAdGroupRows.map(toAdGroupRow);
-    const keywordsPayload = allKeywordRows.map(toKeywordRow);
+    const adGroupsPayload = allAdGroupRows.map((r) => {
+      const { __customerId, ...rest } = r as Record<string, unknown> & { __customerId: string };
+      return toAdGroupRow(rest, __customerId);
+    });
+    const keywordsPayload = allKeywordRows.map((r) => {
+      const { __customerId, ...rest } = r as Record<string, unknown> & { __customerId: string };
+      return toKeywordRow(rest, __customerId);
+    });
 
-    // Delete existing rows for this date range so re-sync replaces data (no unique constraints needed)
-    const customerIds = customers.map((c) => Number(c.id) || c.id);
+    // Delete existing rows for this date range so re-sync replaces metrics and drops stale rows; then insert fresh API rows
+    const customerIds = customers.map((c) => c.id);
     const { error: delCampErr } = await supabase
       .from("google_campaigns_data")
       .delete()
@@ -403,24 +415,21 @@ Deno.serve(async (req: Request) => {
       .lte("segment_date", dateToStr);
     if (delCampErr) throw new Error(`Campaigns delete: ${delCampErr.message}`);
 
-    const campaignIds = [...new Set(campaignsPayload.map((r) => r.campaign_id).filter(Boolean))].map((x) => Number(x) || x);
-    if (campaignIds.length > 0) {
-      const { error: delAdErr } = await supabase
-        .from("google_ad_groups_data")
-        .delete()
-        .in("campaign_id", campaignIds)
-        .gte("segment_date", dateFromStr)
-        .lte("segment_date", dateToStr);
-      if (delAdErr) throw new Error(`Ad groups delete: ${delAdErr.message}`);
+    const { error: delAdErr } = await supabase
+      .from("google_ad_groups_data")
+      .delete()
+      .in("customer_id", customerIds)
+      .gte("segment_date", dateFromStr)
+      .lte("segment_date", dateToStr);
+    if (delAdErr) throw new Error(`Ad groups delete: ${delAdErr.message}`);
 
-      const { error: delKwErr } = await supabase
-        .from("google_keywords_data")
-        .delete()
-        .in("campaign_id", campaignIds)
-        .gte("segment_date", dateFromStr)
-        .lte("segment_date", dateToStr);
-      if (delKwErr) throw new Error(`Keywords delete: ${delKwErr.message}`);
-    }
+    const { error: delKwErr } = await supabase
+      .from("google_keywords_data")
+      .delete()
+      .in("customer_id", customerIds)
+      .gte("segment_date", dateFromStr)
+      .lte("segment_date", dateToStr);
+    if (delKwErr) throw new Error(`Keywords delete: ${delKwErr.message}`);
 
     // Reset identity sequences so next INSERT gets new ids (avoids duplicate key on pkey)
     const { error: seqErr } = await supabase.rpc("reset_google_ads_data_sequences");
