@@ -129,11 +129,11 @@ const METRIC_COLS = [
   { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => t ? fU(t.cost) : '' },
   { col: 'impressions', label: 'Impressions', align: 'r', cell: (r) => fI(r.impressions), total: (t) => t ? fI(t.impressions) : '' },
   { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => t ? fI(t.clicks) : '' },
-  { col: 'purchases', label: 'Purchases', align: 'r', cell: (r) => fI(r.purchases), total: (t) => t ? fI(t.purchases) : '' },
+  { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => t ? fP(t.ctr) : '' },
   { col: 'cpc', label: 'CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => t ? fU(t.cpc) : '' },
   { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => t ? fU(t.cpm) : '' },
   { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => t ? fU(t.cpa) : '' },
-  { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => t ? fP(t.ctr) : '' },
+  { col: 'purchases', label: 'Purchases', align: 'r', cell: (r) => fI(r.purchases), total: (t) => t ? fI(t.purchases) : '' },
 ];
 
 function formatDateRange(from, to) {

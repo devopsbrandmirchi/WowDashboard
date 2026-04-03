@@ -64,15 +64,44 @@ function exportCSV(columns, rows, filename) {
 }
 
 const clamp = { maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const toNum = (v) => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  if (typeof v === 'string') {
+    const n = Number(v.replace(/,/g, '').trim());
+    return Number.isFinite(n) ? n : 0;
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+function withDerivedMetrics(row) {
+  const cost = toNum(row.cost);
+  const impressions = toNum(row.impressions);
+  const clicks = toNum(row.clicks);
+  const purchases = toNum(row.purchases);
+  const conversions = toNum(row.conversions) || purchases;
+  return {
+    ...row,
+    cost,
+    impressions,
+    clicks,
+    purchases,
+    conversions,
+    ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+    cpc: clicks > 0 ? cost / clicks : 0,
+    cpm: impressions > 0 ? (cost / impressions) * 1000 : 0,
+    cpa: purchases > 0 ? cost / purchases : 0,
+  };
+}
 
 function computeTotals(rows) {
   const t = { impressions: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 };
   rows.forEach((r) => {
-    t.impressions += r.impressions || 0;
-    t.clicks += r.clicks || 0;
-    t.cost += r.cost || 0;
-    t.purchases += r.purchases || 0;
-    t.revenue += r.revenue || 0;
+    t.impressions += toNum(r.impressions);
+    t.clicks += toNum(r.clicks);
+    t.cost += toNum(r.cost);
+    t.purchases += toNum(r.purchases);
+    t.revenue += toNum(r.revenue);
   });
   t.ctr = t.impressions ? (t.clicks / t.impressions) * 100 : 0;
   t.cpc = t.clicks ? t.cost / t.clicks : 0;
@@ -133,11 +162,12 @@ const METRIC_COLS = [
   { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => t ? fU(t.cost) : '' },
   { col: 'impressions', label: 'Impressions', align: 'r', cell: (r) => fI(r.impressions), total: (t) => t ? fI(t.impressions) : '' },
   { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => t ? fI(t.clicks) : '' },
-  { col: 'conversions', label: 'Conversions', align: 'r', cell: (r) => fI(r.purchases), total: (t) => t ? fI(t.purchases) : '' },
-  { col: 'purchases', label: 'Purchases', align: 'r', cell: (r) => fI(r.purchases), total: (t) => t ? fI(t.purchases) : '' },
-  { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => t ? fU(t.cpa) : '' },
-  { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => t ? fU(t.cpm) : '' },
   { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => t ? fP(t.ctr) : '' },
+  { col: 'cpc', label: 'CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => t ? fU(t.cpc) : '' },
+  { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => t ? fU(t.cpm) : '' },
+  { col: 'conversions', label: 'Conversions', align: 'r', cell: (r) => fI(r.conversions ?? r.purchases), total: (t) => t ? fI(t.purchases) : '' },
+  { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => t ? fU(t.cpa) : '' },
+  { col: 'purchases', label: 'Purchases', align: 'r', cell: (r) => fI(r.purchases), total: (t) => t ? fI(t.purchases) : '' },
 ];
 
 export function TiktokReportPage() {
@@ -276,7 +306,7 @@ export function TiktokReportPage() {
   }, [colEditorOpen]);
 
   const currentTabConfig = TABS.find((t) => t.id === activeTab) || TABS[0];
-  const currentData = tabDataMap[activeTab] || [];
+  const currentData = (tabDataMap[activeTab] || []).map(withDerivedMetrics);
   const totals = currentData.length ? computeTotals(currentData) : null;
   const defaultSort = activeTab === 'day' ? { col: 'name', dir: 'asc' } : { col: 'cost', dir: 'desc' };
   const s = sort[activeTab] || defaultSort;
