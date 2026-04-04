@@ -105,7 +105,23 @@ const METRICS_MIN = ["spend", "impressions", "clicks"];
 
 /** TikTok report/integrated/get: max 4 dimensions (else code 40002). */
 const DIM_PLACEMENT = ["stat_time_day", "ad_id", "placement_type"];
+const DIM_AUDIENCE_PLACEMENT = ["stat_time_day", "ad_id", "placement"];
 const DIM_BASE = ["stat_time_day", "ad_id"];
+
+function isDimensionOrPlacementRejection(msg: string): boolean {
+  return (
+    /dimension|placement_type|\bplacement\b|length must be/i.test(msg) ||
+    (/\b40002\b/.test(msg) && !/metric/i.test(msg))
+  );
+}
+
+function rowsHaveAnyPlacement(rows: TikTokReportRow[]): boolean {
+  for (const item of rows) {
+    const d = item.dimensions ?? {};
+    if (str(d.placement_type ?? d.placement) != null) return true;
+  }
+  return false;
+}
 
 interface AdEnrich {
   campaign_name: string | null;
@@ -129,7 +145,8 @@ async function fetchAdEnrichment(
     const ids = unique.slice(i, i + ID_CHUNK);
     const u = new URL(`${apiBase.replace(/\/$/, "")}/ad/get/`);
     u.searchParams.set("advertiser_id", advertiserId);
-    u.searchParams.set("filtering", JSON.stringify([{ field: "ad_ids", operator: "IN", value: ids }]));
+    // TikTok ad/get expects FilteringAdGet shape: { "ad_ids": ["..."] }, not [{ field, operator, value }].
+    u.searchParams.set("filtering", JSON.stringify({ ad_ids: ids }));
     u.searchParams.set("page", "1");
     u.searchParams.set("page_size", "1000");
     try {
@@ -169,9 +186,18 @@ async function fetchTikTokReportPages(
   startDate: string,
   endDate: string,
   withPlacement: boolean,
-  metricsList: string[] = METRICS_FULL
+  metricsList: string[] = METRICS_FULL,
+  reportType: "BASIC" | "AUDIENCE" = "BASIC",
+  audiencePlacementDim: "placement" | "placement_type" = "placement",
 ): Promise<TikTokReportRow[]> {
-  const dimensions = withPlacement ? DIM_PLACEMENT : DIM_BASE;
+  let dimensions: string[];
+  if (!withPlacement) dimensions = [...DIM_BASE];
+  else if (reportType === "BASIC") dimensions = [...DIM_PLACEMENT];
+  else {
+    dimensions = audiencePlacementDim === "placement" ? [...DIM_AUDIENCE_PLACEMENT] : [...DIM_PLACEMENT];
+  }
+
+  const metricsForRequest = reportType === "AUDIENCE" ? METRICS_MIN : metricsList;
 
   const out: TikTokReportRow[] = [];
   let page = 1;
@@ -182,14 +208,14 @@ async function fetchTikTokReportPages(
     const u = new URL(`${apiBase.replace(/\/$/, "")}/report/integrated/get/`);
     u.searchParams.set("advertiser_id", advertiserId);
     u.searchParams.set("service_type", "AUCTION");
-    u.searchParams.set("report_type", "BASIC");
+    u.searchParams.set("report_type", reportType);
     u.searchParams.set("data_level", "AUCTION_AD");
     u.searchParams.set("start_date", startDate);
     u.searchParams.set("end_date", endDate);
     u.searchParams.set("page", String(page));
     u.searchParams.set("page_size", String(pageSize));
     u.searchParams.set("dimensions", JSON.stringify(dimensions));
-    u.searchParams.set("metrics", JSON.stringify(metricsList));
+    u.searchParams.set("metrics", JSON.stringify(metricsForRequest));
     const res = await fetch(u.toString(), { headers: { "Access-Token": token } });
     const text = await res.text();
     try {
@@ -202,11 +228,64 @@ async function fetchTikTokReportPages(
   let json = await fetchPage();
   if (json.code !== 0) {
     const msg = json.message || "";
-    if (withPlacement && /dimension|placement|invalid|40002|length must be/i.test(msg)) {
-      return fetchTikTokReportPages(apiBase, token, advertiserId, startDate, endDate, false, metricsList);
+    if (reportType === "BASIC" && metricsList !== METRICS_MIN && /metric/i.test(msg)) {
+      return fetchTikTokReportPages(
+        apiBase,
+        token,
+        advertiserId,
+        startDate,
+        endDate,
+        withPlacement,
+        METRICS_MIN,
+        "BASIC",
+        audiencePlacementDim,
+      );
     }
-    if (metricsList !== METRICS_MIN && /metric|invalid/i.test(msg)) {
-      return fetchTikTokReportPages(apiBase, token, advertiserId, startDate, endDate, withPlacement, METRICS_MIN);
+    if (withPlacement && isDimensionOrPlacementRejection(msg)) {
+      if (reportType === "BASIC") {
+        console.warn(LOG, "BASIC+placement rejected; trying AUDIENCE+placement:", msg.slice(0, 260));
+        return fetchTikTokReportPages(
+          apiBase,
+          token,
+          advertiserId,
+          startDate,
+          endDate,
+          true,
+          METRICS_FULL,
+          "AUDIENCE",
+          "placement",
+        );
+      }
+      if (reportType === "AUDIENCE" && audiencePlacementDim === "placement") {
+        console.warn(LOG, "AUDIENCE+placement rejected; trying AUDIENCE+placement_type:", msg.slice(0, 260));
+        return fetchTikTokReportPages(
+          apiBase,
+          token,
+          advertiserId,
+          startDate,
+          endDate,
+          true,
+          METRICS_FULL,
+          "AUDIENCE",
+          "placement_type",
+        );
+      }
+      console.warn(
+        LOG,
+        "Placement breakdown unavailable; fetching ad/day without placement. API said:",
+        msg.slice(0, 280),
+      );
+      return fetchTikTokReportPages(
+        apiBase,
+        token,
+        advertiserId,
+        startDate,
+        endDate,
+        false,
+        METRICS_FULL,
+        "BASIC",
+        "placement",
+      );
     }
     throw new Error(`TikTok report code ${json.code}: ${msg || "unknown"}`);
   }
@@ -219,6 +298,49 @@ async function fetchTikTokReportPages(
     totalPage = json.data?.page_info?.total_page ?? 1;
     page++;
   } while (page <= totalPage);
+
+  if (withPlacement && reportType === "BASIC" && out.length > 0 && !rowsHaveAnyPlacement(out)) {
+    console.warn(LOG, "BASIC report had no placement labels; trying AUDIENCE+placement", { rows: out.length });
+    return fetchTikTokReportPages(
+      apiBase,
+      token,
+      advertiserId,
+      startDate,
+      endDate,
+      true,
+      METRICS_FULL,
+      "AUDIENCE",
+      "placement",
+    );
+  }
+  if (withPlacement && reportType === "AUDIENCE" && audiencePlacementDim === "placement" && !rowsHaveAnyPlacement(out)) {
+    console.warn(LOG, "AUDIENCE+placement still blank; trying AUDIENCE+placement_type", { rows: out.length });
+    return fetchTikTokReportPages(
+      apiBase,
+      token,
+      advertiserId,
+      startDate,
+      endDate,
+      true,
+      METRICS_FULL,
+      "AUDIENCE",
+      "placement_type",
+    );
+  }
+  if (withPlacement && reportType === "AUDIENCE" && audiencePlacementDim === "placement_type" && !rowsHaveAnyPlacement(out)) {
+    console.warn(LOG, "Audience placement empty; falling back to ad/day without placement", { rows: out.length });
+    return fetchTikTokReportPages(
+      apiBase,
+      token,
+      advertiserId,
+      startDate,
+      endDate,
+      false,
+      METRICS_FULL,
+      "BASIC",
+      "placement",
+    );
+  }
 
   return out;
 }
