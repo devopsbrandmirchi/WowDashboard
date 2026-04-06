@@ -101,6 +101,10 @@ interface InsightRow {
   spend?: string;
   clicks?: string;
   frequency?: string;
+  /** Breakdown: facebook | instagram | audience_network | messenger */
+  publisher_platform?: string;
+  /** Breakdown: feed, story, reels, etc. */
+  platform_position?: string;
   actions?: Array<{ action_type: string; value: string }>;
   action_values?: Array<{ action_type: string; value: string }>;
 }
@@ -133,17 +137,20 @@ function toDataRow(insight: InsightRow, accountId: string, dateFromStr: string, 
   const results = purchaseCount || parseActions(actions, "link_click") || null;
   const costPerResult = spend != null && results != null && results > 0 ? spend / results : null;
 
+  const platform = insight.publisher_platform?.trim() || null;
+  const placement = insight.platform_position?.trim() || null;
+
   return {
     account_id: accountId || insight.account_id || "",
     campaign_name: insight.campaign_name ?? null,
     adset_name: insight.adset_name ?? null,
     ad_name: insight.ad_name ?? null,
-    placement: null,
+    placement,
     day: insight.date_start ?? null,
     campaign_id: insight.campaign_id ?? null,
     adset_id: insight.adset_id ?? null,
     ad_id: insight.ad_id ?? null,
-    platform: null,
+    platform,
     device_platform: null,
     delivery_status: null,
     delivery_level: null,
@@ -223,6 +230,7 @@ Deno.serve(async (req: Request) => {
         time_increment: "1",
         time_range: JSON.stringify({ since: dateFromStr, until: dateToStr }),
         fields,
+        breakdowns: "publisher_platform,platform_position",
         limit: "500",
       },
       (j) => j.data ?? []

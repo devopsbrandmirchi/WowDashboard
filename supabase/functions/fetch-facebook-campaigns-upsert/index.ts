@@ -76,6 +76,8 @@ interface InsightRow {
   spend?: string;
   clicks?: string;
   frequency?: string;
+  publisher_platform?: string;
+  platform_position?: string;
   actions?: Array<{ action_type: string; value: string }>;
   action_values?: Array<{ action_type: string; value: string }>;
 }
@@ -108,17 +110,20 @@ function toDataRow(insight: InsightRow, accountId: string, dateFromStr: string, 
   const results = purchaseCount || parseActions(actions, "link_click") || null;
   const costPerResult = spend != null && results != null && results > 0 ? spend / results : null;
 
+  const platform = insight.publisher_platform?.trim() || null;
+  const placement = insight.platform_position?.trim() || null;
+
   return {
     account_id: accountId || insight.account_id || "",
     campaign_name: insight.campaign_name ?? null,
     adset_name: insight.adset_name ?? null,
     ad_name: insight.ad_name ?? null,
-    placement: null,
+    placement,
     day: insight.date_start ?? null,
     campaign_id: insight.campaign_id ?? null,
     adset_id: insight.adset_id ?? null,
     ad_id: insight.ad_id ?? null,
-    platform: null,
+    platform,
     device_platform: null,
     delivery_status: null,
     delivery_level: null,
@@ -238,6 +243,7 @@ Deno.serve(async (req: Request) => {
         time_increment: "1",
         time_range: JSON.stringify({ since: dateFromStr, until: dateToStr }),
         fields,
+        breakdowns: "publisher_platform,platform_position",
         limit: "500",
       },
       (j) => j.data ?? []
@@ -249,7 +255,7 @@ Deno.serve(async (req: Request) => {
 
     const dedupe = new Map<string, Record<string, unknown>>();
     for (const r of rows) {
-      const k = `${r.account_id}\0${r.ad_id}\0${r.day}`;
+      const k = `${r.account_id}\0${r.ad_id}\0${r.day}\0${r.platform ?? ""}\0${r.placement ?? ""}\0${r.device_platform ?? ""}`;
       dedupe.set(k, r);
     }
     const uniqueRows = [...dedupe.values()];
@@ -269,7 +275,7 @@ Deno.serve(async (req: Request) => {
     for (let i = 0; i < uniqueRows.length; i += BATCH) {
       const chunk = uniqueRows.slice(i, i + BATCH).map(stripId);
       const { error } = await supabase.from("facebook_campaigns_data").upsert(chunk, {
-        onConflict: "account_id,ad_id,day",
+        onConflict: "account_id,ad_id,day,platform,placement,device_platform",
         ignoreDuplicates: false,
       });
       if (error) throw new Error(`facebook_campaigns_data upsert: ${error.message}`);
