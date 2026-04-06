@@ -50,8 +50,30 @@ const PATH_TO_PAGE = {
   '/profile': 'profile',
 };
 
+const PAGE_TITLES = {
+  'dashboard': 'Executive Dashboard',
+  'combined-reporting': 'Combined Reporting',
+  'google-ads': 'Google Ads',
+  'meta-ads': 'Meta Ads',
+  'bing-ads': 'Microsoft Ads',
+  'tiktok-ads': 'TikTok Ads',
+  'reddit-ads': 'Reddit Ads',
+  'settings': 'White-Label Settings',
+  'roles-permissions': 'Roles & Permissions',
+  'users': 'Users',
+  'google-campaigns-reference': 'Google Campaigns Reference',
+  'reddit-campaigns-reference': 'Reddit Campaigns Reference',
+  'tiktok-campaigns-reference': 'TikTok Campaigns Reference',
+  'facebook-campaigns-reference': 'Facebook Campaigns Reference',
+  'facebook-adset-reference': 'Facebook Adset Reference',
+  'microsoft-campaigns-reference': 'Microsoft Campaigns Reference',
+  'profile': 'Profile',
+  'subscriptions-analytics': 'Subscription Analytics',
+  'subscriptions-subscribers': 'Subscriber Intelligence',
+};
+
 function CurrentPage({ forcePage }) {
-  const { currentPage, setCurrentPage } = useApp();
+  const { currentPage, setCurrentPage, branding } = useApp();
   const location = useLocation();
 
   useEffect(() => {
@@ -60,6 +82,12 @@ function CurrentPage({ forcePage }) {
   }, [location.pathname, setCurrentPage]);
 
   const page = forcePage || currentPage;
+
+  useEffect(() => {
+    const pageTitle = PAGE_TITLES[page] || 'Dashboard';
+    const appName = branding?.agencyName || 'Digital Analytics Dashboard';
+    document.title = `${pageTitle} — ${appName}`;
+  }, [page, branding?.agencyName]);
 
   if (page === 'dashboard') return <DashboardPage />;
   if (page === 'google-ads') return <GoogleAdsPage />;
