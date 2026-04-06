@@ -77,6 +77,7 @@ export const ALL_PERMISSION_KEYS = {
     'sidebar:tiktok-campaigns-reference',
     'sidebar:facebook-campaigns-reference',
     'sidebar:facebook-adset-reference',
+    'sidebar:microsoft-campaigns-reference',
   ],
   reportGoogleAds: [
     'report:google-ads:campaigntypes',

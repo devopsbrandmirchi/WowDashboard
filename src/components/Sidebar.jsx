@@ -10,6 +10,7 @@ const CAMPAIGNS_REFERENCE_SUBMENU_IDS = [
   'tiktok-campaigns-reference',
   'facebook-campaigns-reference',
   'facebook-adset-reference',
+  'microsoft-campaigns-reference',
 ];
 
 const NAV_ITEMS = [
@@ -46,6 +47,7 @@ const NAV_ITEMS = [
   { id: 'tiktok-campaigns-reference', label: 'TikTok Campaigns Reference', icon: '📋', section: 'System' },
   { id: 'facebook-campaigns-reference', label: 'Facebook Campaigns Reference', icon: '📋', section: 'System' },
   { id: 'facebook-adset-reference', label: 'Facebook Adset Reference', icon: '📋', section: 'System' },
+  { id: 'microsoft-campaigns-reference', label: 'Microsoft Campaigns Reference', icon: '📋', section: 'System' },
 ];
 
 function groupBySection(items) {
@@ -78,6 +80,7 @@ const PAGE_ROUTES = {
   'tiktok-campaigns-reference': '/settings/tiktok-campaigns-reference',
   'facebook-campaigns-reference': '/settings/facebook-campaigns-reference',
   'facebook-adset-reference': '/settings/facebook-adset-reference',
+  'microsoft-campaigns-reference': '/settings/microsoft-campaigns-reference',
 };
 
 export function Sidebar() {
@@ -138,9 +141,6 @@ export function Sidebar() {
           return (
             <div key={sectionLabel} className="sidebar-section sidebar-section-with-submenu">
               <div className="sidebar-section-label">{sectionLabel}</div>
-              <ul className="sidebar-nav">
-                {visibleSystem.map((item) => renderNavLink(item))}
-              </ul>
               {visibleSub.length > 0 && (
                 <div className="sidebar-submenu">
                   <button
@@ -160,6 +160,9 @@ export function Sidebar() {
                   )}
                 </div>
               )}
+              <ul className="sidebar-nav">
+                {visibleSystem.map((item) => renderNavLink(item))}
+              </ul>
             </div>
           );
         }

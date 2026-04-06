@@ -23,6 +23,7 @@ import { RedditCampaignsReferencePage } from './pages/RedditCampaignsReferencePa
 import { TiktokCampaignsReferencePage } from './pages/TiktokCampaignsReferencePage';
 import { FacebookCampaignsReferencePage } from './pages/FacebookCampaignsReferencePage';
 import { FacebookAdsetReferencePage } from './pages/FacebookAdsetReferencePage';
+import { MicrosoftCampaignsReferencePage } from './pages/MicrosoftCampaignsReferencePage';
 import { ProfilePage } from './pages/ProfilePage';
 import { VimeoAnalyticsPage } from './pages/VimeoAnalyticsPage';
 import { SubscriberIntelligencePage } from './pages/SubscriberIntelligencePage';
@@ -45,6 +46,7 @@ const PATH_TO_PAGE = {
   '/settings/tiktok-campaigns-reference': 'tiktok-campaigns-reference',
   '/settings/facebook-campaigns-reference': 'facebook-campaigns-reference',
   '/settings/facebook-adset-reference': 'facebook-adset-reference',
+  '/settings/microsoft-campaigns-reference': 'microsoft-campaigns-reference',
   '/profile': 'profile',
 };
 
@@ -74,6 +76,7 @@ function CurrentPage({ forcePage }) {
   if (page === 'tiktok-campaigns-reference') return <TiktokCampaignsReferencePage />;
   if (page === 'facebook-campaigns-reference') return <FacebookCampaignsReferencePage />;
   if (page === 'facebook-adset-reference') return <FacebookAdsetReferencePage />;
+  if (page === 'microsoft-campaigns-reference') return <MicrosoftCampaignsReferencePage />;
   if (page === 'profile') return <ProfilePage />;
   if (page === 'subscriptions-analytics') return <VimeoAnalyticsPage />;
   if (page === 'subscriptions-subscribers') return <SubscriberIntelligencePage />;
@@ -105,6 +108,8 @@ function AppContent({ forcePage }) {
     } else if (path === '/settings/facebook-campaigns-reference' && !canAccessSidebar('facebook-campaigns-reference')) {
       navigate('/', { replace: true });
     } else if (path === '/settings/facebook-adset-reference' && !canAccessSidebar('facebook-adset-reference')) {
+      navigate('/', { replace: true });
+    } else if (path === '/settings/microsoft-campaigns-reference' && !canAccessSidebar('microsoft-campaigns-reference')) {
       navigate('/', { replace: true });
     }
   }, [location.pathname, canAccessSidebar, navigate, permissionsLoading]);
@@ -165,6 +170,7 @@ export default function App() {
         <Route path="/settings/tiktok-campaigns-reference" element={<AppContent forcePage="tiktok-campaigns-reference" />} />
         <Route path="/settings/facebook-campaigns-reference" element={<AppContent forcePage="facebook-campaigns-reference" />} />
         <Route path="/settings/facebook-adset-reference" element={<AppContent forcePage="facebook-adset-reference" />} />
+        <Route path="/settings/microsoft-campaigns-reference" element={<AppContent forcePage="microsoft-campaigns-reference" />} />
         <Route path="/settings" element={<AppContent forcePage="settings" />} />
         <Route path="*" element={<AppContent />} />
       </Routes>
