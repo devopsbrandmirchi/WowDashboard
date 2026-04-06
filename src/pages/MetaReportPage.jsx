@@ -65,13 +65,20 @@ function computeTotals(rows) {
   t.ctr = t.impressions ? (t.clicks / t.impressions) * 100 : 0;
   t.cpc = t.clicks ? t.cost / t.clicks : 0;
   t.cpm = t.impressions ? (t.cost / (t.impressions / 1000)) : 0;
+  t.cpa = t.purchases ? t.cost / t.purchases : 0;
+  t.conv_rate = t.clicks ? (t.purchases / t.clicks) * 100 : 0;
   return t;
 }
 
 function sortRows(rows, col, dir) {
   return [...rows].sort((a, b) => {
-    const va = col === 'name' ? a.name : a[col], vb = col === 'name' ? b.name : b[col];
     const d = dir === 'asc' ? 1 : -1;
+    if (col === 'conv_rate') {
+      const ra = a.clicks ? ((a.purchases || 0) / a.clicks) * 100 : 0;
+      const rb = b.clicks ? ((b.purchases || 0) / b.clicks) * 100 : 0;
+      return d * (ra - rb);
+    }
+    const va = col === 'name' ? a.name : a[col], vb = col === 'name' ? b.name : b[col];
     if (typeof va === 'string' && typeof vb === 'string') return d * va.localeCompare(vb);
     return d * ((+(va || 0)) - (+(vb || 0)));
   });
@@ -123,6 +130,8 @@ const METRIC_COLS = [
   { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => t ? fU(t.cpm) : '' },
   { col: 'reach', label: 'Reach', align: 'r', cell: (r) => fI(r.reach), total: (t) => t ? fI(t.reach) : '' },
   { col: 'purchases', label: 'Purchases', align: 'r', cell: (r) => fI(r.purchases), total: (t) => t ? fI(t.purchases) : '' },
+  { col: 'conv_rate', label: 'Conv. Rate', align: 'r', cell: (r) => fP(r.conv_rate ?? (r.clicks ? ((r.purchases || 0) / r.clicks) * 100 : 0)), total: (t) => (t ? fP(t.conv_rate) : '') },
+  { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa ?? (r.purchases ? r.cost / r.purchases : 0)), total: (t) => (t ? fU(t.cpa) : '') },
 ];
 
 const META_KPI_LABELS = [
@@ -130,6 +139,7 @@ const META_KPI_LABELS = [
   { key: 'impressions', label: 'Impressions', fmt: fI },
   { key: 'clicks', label: 'Clicks', fmt: fI },
   { key: 'purchases', label: 'Conversions', fmt: fI },
+  { key: 'conv_rate', label: 'Conv. Rate', fmt: fP },
   { key: 'cpa', label: 'CPA', fmt: fU },
   { key: 'cpc', label: 'Avg. CPC', fmt: fU },
 ];
@@ -516,6 +526,7 @@ export function MetaReportPage() {
               <div className="rkpi-card"><div className="rkpi-header"><span className="rkpi-icon">👁</span><span className="rkpi-label">Impressions</span></div><div className="rkpi-value">{fI(kpis.impressions)}</div></div>
               <div className="rkpi-card"><div className="rkpi-header"><span className="rkpi-icon">👆</span><span className="rkpi-label">Clicks</span></div><div className="rkpi-value">{fI(kpis.clicks)}</div></div>
               <div className="rkpi-card"><div className="rkpi-header"><span className="rkpi-icon">🎯</span><span className="rkpi-label">Conversions</span></div><div className="rkpi-value">{fI(kpis.purchases)}</div></div>
+              <div className="rkpi-card"><div className="rkpi-header"><span className="rkpi-icon">📈</span><span className="rkpi-label">Conv. Rate</span></div><div className="rkpi-value">{fP(kpis.conv_rate)}</div></div>
               <div className="rkpi-card"><div className="rkpi-header"><span className="rkpi-icon">🏷</span><span className="rkpi-label">CPA</span></div><div className="rkpi-value">{fU(kpis.cpa)}</div></div>
               <div className="rkpi-card"><div className="rkpi-header"><span className="rkpi-icon">💵</span><span className="rkpi-label">Avg. CPC</span></div><div className="rkpi-value">{fU(kpis.cpc)}</div></div>
             </div>

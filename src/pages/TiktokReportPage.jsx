@@ -107,6 +107,7 @@ function computeTotals(rows) {
   t.cpc = t.clicks ? t.cost / t.clicks : 0;
   t.cpm = t.impressions ? (t.cost / (t.impressions / 1000)) : 0;
   t.cpa = t.purchases ? t.cost / t.purchases : 0;
+  t.conv_rate = t.clicks ? (t.purchases / t.clicks) * 100 : 0;
   return t;
 }
 
@@ -166,6 +167,7 @@ const METRIC_COLS = [
   { col: 'cpc', label: 'CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => t ? fU(t.cpc) : '' },
   { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => t ? fU(t.cpm) : '' },
   { col: 'conversions', label: 'Conversions', align: 'r', cell: (r) => fI(r.conversions ?? r.purchases), total: (t) => t ? fI(t.purchases) : '' },
+  { col: 'conv_rate', label: 'Conv. Rate', align: 'r', cell: (r) => fP(r.conv_rate ?? (r.clicks ? ((r.purchases || 0) / r.clicks) * 100 : 0)), total: (t) => (t ? fP(t.conv_rate) : '') },
   { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => t ? fU(t.cpa) : '' },
   { col: 'purchases', label: 'Purchases', align: 'r', cell: (r) => fI(r.purchases), total: (t) => t ? fI(t.purchases) : '' },
 ];
@@ -398,10 +400,16 @@ export function TiktokReportPage() {
       const yAxisID = m.axis === 'right' ? 'y1' : 'y';
       if (m.axis === 'right') needsRight = true;
       else needsLeft = true;
-      const dataKey = m.key === 'conversions' ? 'conversions' : m.key;
       datasets.push({
         label: m.label,
-        data: dailyTrends.map((d) => +(d[dataKey] || 0)),
+        data: dailyTrends.map((d) => {
+          if (m.key === 'conv_rate') {
+            const conv = d.conversions ?? d.purchases ?? 0;
+            return d.clicks ? (conv / d.clicks) * 100 : 0;
+          }
+          const dataKey = m.key === 'conversions' ? 'conversions' : m.key;
+          return +(d[dataKey] || 0);
+        }),
         borderColor: m.color,
         backgroundColor: m.color + '18',
         tension: 0.35,
