@@ -37,8 +37,11 @@ export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '', {
  * supabase.functions.invoke goes through the client's fetchWithAuth + FunctionsClient merge;
  * that path has repeatedly produced 401 Invalid JWT even with correct tokens. Direct fetch
  * sets only apikey + Authorization and matches the working CLI request.
+ *
+ * @param {object} [options] - `{ method?: 'GET'|'POST', signal?, headers? }` — GET sends no body.
  */
 export async function invokeEdgeFunction(functionName, body, options = {}) {
+  const { method = 'POST', signal, headers: extraHeaders } = options;
   const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession();
   if (refreshErr && import.meta.env.DEV) {
     console.warn('[invokeEdgeFunction] refreshSession:', refreshErr.message);
@@ -69,17 +72,16 @@ export async function invokeEdgeFunction(functionName, body, options = {}) {
 
   const base = (supabaseUrl || '').replace(/\/+$/, '');
   const url = `${base}/functions/v1/${encodeURIComponent(functionName)}`;
-  const { signal, headers: extraHeaders } = options;
   try {
     const res = await fetch(url, {
-      method: 'POST',
+      method,
       headers: {
         ...(extraHeaders || {}),
-        'Content-Type': 'application/json',
+        ...(method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
         apikey: supabaseAnonKey,
         Authorization: `Bearer ${bearer}`,
       },
-      body: JSON.stringify(body ?? {}),
+      body: method === 'GET' ? undefined : JSON.stringify(body ?? {}),
       signal,
     });
     const text = await res.text();

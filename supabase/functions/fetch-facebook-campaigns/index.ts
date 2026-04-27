@@ -1,10 +1,13 @@
 // Sync Facebook/Meta Ads campaign data into Supabase via Graph API.
-// Set env: FB_APP_ID, FB_APP_SECRET, FB_ACCESS_TOKEN (user or system token with ads_read), FB_AD_ACCOUNT_ID or FB_ACCOUNT_ID (act_xxx).
-// Optional: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (auto-set in Supabase Edge).
+// App ID/secret: facebook_ads_integration_settings (fb_app_id, fb_app_secret) or FB_APP_ID / FB_APP_SECRET secrets.
+// FB_ACCESS_TOKEN (user token), FB_AD_ACCOUNT_ID or FB_ACCOUNT_ID (act_xxx). SUPABASE_* auto-set on Edge.
+//
+// Tokens: Settings row access_token first, else FB_ACCESS_TOKEN secret, else app token.
+// Short-lived user tokens expire in ~1–2 hours; use a long-lived user or system user token with ads_read for cron.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const GRAPH_VERSION = "v18.0";
+const GRAPH_VERSION = "v19.0";
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -23,10 +26,29 @@ function getAdAccountId(): string {
   return v.trim();
 }
 
-/** Get app access token from FB_APP_ID and FB_APP_SECRET. Not sufficient for ad account reads; use FB_ACCESS_TOKEN for that. */
-async function getAppAccessToken(): Promise<string> {
-  const appId = getEnv("FB_APP_ID");
-  const appSecret = getEnv("FB_APP_SECRET");
+async function resolveFacebookAppCredentials(
+  supabase: ReturnType<typeof createClient>
+): Promise<{ appId: string; appSecret: string }> {
+  const { data, error } = await supabase
+    .from("facebook_ads_integration_settings")
+    .select("fb_app_id, fb_app_secret")
+    .eq("id", 1)
+    .maybeSingle();
+  const fromId = !error && data?.fb_app_id ? String(data.fb_app_id).trim() : "";
+  const fromSecret = !error && data?.fb_app_secret ? String(data.fb_app_secret).trim() : "";
+  const appId = fromId || Deno.env.get("FB_APP_ID")?.trim() || "";
+  const appSecret = fromSecret || Deno.env.get("FB_APP_SECRET")?.trim() || "";
+  if (!appId || !appSecret) {
+    throw new Error(
+      "Missing Facebook app credentials: set fb_app_id and fb_app_secret in facebook_ads_integration_settings (Settings) or FB_APP_ID / FB_APP_SECRET secrets."
+    );
+  }
+  return { appId, appSecret };
+}
+
+/** App token from DB app fields or env. Not sufficient for ad account reads without ads_read user token. */
+async function getAppAccessToken(supabase: ReturnType<typeof createClient>): Promise<string> {
+  const { appId, appSecret } = await resolveFacebookAppCredentials(supabase);
   const url = `https://graph.facebook.com/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&grant_type=client_credentials`;
   const res = await fetch(url);
   if (!res.ok) {
@@ -39,45 +61,87 @@ async function getAppAccessToken(): Promise<string> {
   return token;
 }
 
-/** Use FB_ACCESS_TOKEN if set (required for reading ad account); else fall back to app token (may fail for ads). */
-async function getAccessToken(): Promise<string> {
+/** DB token (Settings) → env FB_ACCESS_TOKEN → app token */
+async function resolveFacebookAccessToken(
+  supabase: ReturnType<typeof createClient>
+): Promise<string> {
+  const { data, error } = await supabase
+    .from("facebook_ads_integration_settings")
+    .select("access_token")
+    .eq("id", 1)
+    .maybeSingle();
+  if (!error && data?.access_token && String(data.access_token).trim().length > 0) {
+    return String(data.access_token).trim();
+  }
   const userToken = Deno.env.get("FB_ACCESS_TOKEN");
   if (userToken?.trim()) return userToken.trim();
-  return getAppAccessToken();
+  return getAppAccessToken(supabase);
 }
 
-async function graphGet<T = unknown>(path: string, params: Record<string, string>): Promise<T> {
-  const token = await getAccessToken();
+/** Thrown when FB_ACCESS_TOKEN is expired or invalid (Meta OAuthException 190). */
+class FacebookTokenError extends Error {
+  readonly status = 401;
+  constructor(message: string) {
+    super(message);
+    this.name = "FacebookTokenError";
+  }
+}
+
+interface GraphErrorPayload {
+  error?: { message?: string; type?: string; code?: number; error_subcode?: number };
+}
+
+function throwIfFacebookAuthError(status: number, bodyText: string, context: string): void {
+  let payload: GraphErrorPayload = {};
+  try {
+    payload = JSON.parse(bodyText) as GraphErrorPayload;
+  } catch {
+    /* keep raw message path */
+  }
+  const e = payload.error;
+  const code = e?.code;
+  const sub = e?.error_subcode;
+  // 190 = OAuth invalid/expired; 463 = session expired; 467 = invalid access token
+  const isToken = code === 190 || sub === 463 || sub === 467;
+  if (isToken) {
+    const meta = e?.message ?? bodyText;
+    throw new FacebookTokenError(
+      `${context}: Facebook access token is expired or invalid. In Dashboard → Settings → Facebook / Meta Ads, save a new token, or update the FB_ACCESS_TOKEN Edge Function secret. Use a long-lived user or system user token with ads_read. Meta said: ${meta}`
+    );
+  }
+}
+
+async function readGraphFailure(res: Response, context: string): Promise<never> {
+  const t = await res.text();
+  throwIfFacebookAuthError(res.status, t, context);
+  throw new Error(`${context}: ${res.status} ${t}`);
+}
+
+async function graphGet<T = unknown>(token: string, path: string, params: Record<string, string>): Promise<T> {
   const base = `https://graph.facebook.com/${GRAPH_VERSION}`;
   const pathClean = path.startsWith("/") ? path : `/${path}`;
   const search = new URLSearchParams({ ...params, access_token: token });
   const url = `${base}${pathClean}?${search}`;
   const res = await fetch(url);
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Graph API ${path}: ${res.status} ${t}`);
-  }
+  if (!res.ok) await readGraphFailure(res, `Graph API ${path}`);
   return res.json() as Promise<T>;
 }
 
 /** Paginate through a Graph API edge (e.g. insights). */
 async function graphGetAll<T>(
+  token: string,
   path: string,
   params: Record<string, string>,
   extractData: (json: { data?: T[]; paging?: { next?: string } }) => T[] = (j) => j.data ?? []
 ): Promise<T[]> {
   const out: T[] = [];
   let nextUrl: string | null = `${path}?${new URLSearchParams(params)}`;
-  const token = await getAccessToken();
 
   while (nextUrl) {
     const fullUrl = nextUrl.startsWith("http") ? nextUrl : `https://graph.facebook.com/${GRAPH_VERSION}${nextUrl}`;
     const url = fullUrl.includes("access_token=") ? fullUrl : `${fullUrl}${fullUrl.includes("?") ? "&" : "?"}access_token=${token}`;
     const res = await fetch(url);
-    if (!res.ok) {
-      const t = await res.text();
-      throw new Error(`Graph API pagination: ${res.status} ${t}`);
-    }
+    if (!res.ok) await readGraphFailure(res, "Graph API pagination");
     const json = (await res.json()) as { data?: T[]; paging?: { next?: string } };
     const data = extractData(json);
     out.push(...data);
@@ -194,6 +258,8 @@ Deno.serve(async (req: Request) => {
     const adAccountId = rawAccountId.toLowerCase().startsWith("act_") ? rawAccountId : `act_${rawAccountId}`;
     const supabaseUrl = getEnv("SUPABASE_URL");
     const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const graphToken = await resolveFacebookAccessToken(supabase);
 
     // Last 5 full days ending yesterday (excludes incomplete today); delete+insert for that window refreshes metrics and drops stale rows
     const now = new Date();
@@ -224,6 +290,7 @@ Deno.serve(async (req: Request) => {
     ].join(",");
 
     const insights = await graphGetAll<InsightRow>(
+      graphToken,
       `/${adAccountId}/insights`,
       {
         level: "ad",
@@ -240,8 +307,6 @@ Deno.serve(async (req: Request) => {
 
     const accountId = adAccountId.startsWith("act_") ? adAccountId : `act_${adAccountId}`;
     const rows = insights.map((i) => toDataRow(i, accountId, dateFromStr, dateToStr));
-
-    const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     await supabase
       .from("facebook_campaigns_data")
@@ -298,9 +363,16 @@ Deno.serve(async (req: Request) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[fetch-facebook-campaigns] Error", message);
+    const isToken = err instanceof FacebookTokenError;
     return new Response(
-      JSON.stringify({ error: "fetch_facebook_campaigns_failed", message }),
-      { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }
+      JSON.stringify({
+        error: isToken ? "fb_access_token_expired" : "fetch_facebook_campaigns_failed",
+        message,
+      }),
+      {
+        status: isToken ? 401 : 500,
+        headers: { ...CORS, "Content-Type": "application/json" },
+      }
     );
   }
 });

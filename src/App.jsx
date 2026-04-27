@@ -27,6 +27,8 @@ import { MicrosoftCampaignsReferencePage } from './pages/MicrosoftCampaignsRefer
 import { ProfilePage } from './pages/ProfilePage';
 import { VimeoAnalyticsPage } from './pages/VimeoAnalyticsPage';
 import { SubscriberIntelligencePage } from './pages/SubscriberIntelligencePage';
+import { invokeEdgeFunction } from './lib/supabase.js';
+import { getFacebookOAuthRedirectUri } from './lib/facebookOAuth.js';
 
 const PATH_TO_PAGE = {
   '/': 'dashboard',
@@ -117,6 +119,66 @@ function AppContent({ forcePage }) {
   const navigate = useNavigate();
   const isSettingsRoot = location.pathname === '/settings';
   const { canAccessSidebar, loading: permissionsLoading } = useUserPermissions();
+  const { showNotification } = useApp();
+
+  /** Facebook OAuth returns ?code=&state= on the document URL (before #). Exchange once and open Settings → Meta. */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const state = params.get('state');
+    const oauthError = params.get('error');
+    const oauthDesc = params.get('error_description');
+
+    if (oauthError) {
+      const msg = oauthDesc
+        ? decodeURIComponent(oauthDesc.replace(/\+/g, ' '))
+        : oauthError;
+      showNotification(`Meta login cancelled or failed: ${msg}`);
+      const u = new URL(window.location.href);
+      u.search = '';
+      window.history.replaceState(null, document.title, u.href);
+      return;
+    }
+
+    if (!code || !state) return;
+
+    const expected = sessionStorage.getItem('fb_oauth_state');
+    if (!expected || state !== expected) return;
+
+    const startedKey = `fb_oauth_started_${state}`;
+    if (sessionStorage.getItem(startedKey)) return;
+    sessionStorage.setItem(startedKey, '1');
+
+    (async () => {
+      try {
+        const redirectUri = getFacebookOAuthRedirectUri();
+        const { data, error } = await invokeEdgeFunction('exchange-facebook-oauth-code', {
+          code,
+          redirect_uri: redirectUri,
+        });
+        if (error) throw error;
+        if (data?.error) {
+          throw new Error(typeof data.message === 'string' ? data.message : String(data.error));
+        }
+
+        sessionStorage.removeItem('fb_oauth_state');
+        sessionStorage.setItem('wow_settings_nav_after_oauth', 'meta');
+        showNotification(typeof data?.message === 'string' ? data.message : 'Meta connected.');
+
+        const u = new URL(window.location.href);
+        u.search = '';
+        u.hash = '#/settings';
+        window.history.replaceState(null, document.title, u.href);
+        navigate('/settings', { replace: true, state: { openMetaOAuth: true } });
+      } catch (e) {
+        sessionStorage.removeItem(startedKey);
+        showNotification(e?.message || String(e) || 'Meta OAuth failed.');
+        const u = new URL(window.location.href);
+        u.search = '';
+        window.history.replaceState(null, document.title, u.href);
+      }
+    })();
+  }, [navigate, showNotification]);
 
   useEffect(() => {
     if (permissionsLoading) return;

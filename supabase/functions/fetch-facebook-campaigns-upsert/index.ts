@@ -1,11 +1,12 @@
 // Facebook/Meta sync: upsert + facebook_ads_sync_by_date (original: fetch-facebook-campaigns).
-// FB_APP_ID, FB_APP_SECRET, FB_ACCESS_TOKEN, FB_AD_ACCOUNT_ID or FB_ACCOUNT_ID.
+// App credentials: facebook_ads_integration_settings (fb_app_id, fb_app_secret) → FB_APP_ID / FB_APP_SECRET secrets.
+// FB_AD_ACCOUNT_ID or FB_ACCOUNT_ID. Token: same row access_token → FB_ACCESS_TOKEN → app token.
 // POST { date_from?, date_to? } or GET query params. Default: last 2 days.
 // Requires migration 20250318200001_facebook_ads_upsert_sync_history.sql
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const GRAPH_VERSION = "v18.0";
+const GRAPH_VERSION = "v19.0";
 const LOG = "[fetch-facebook-campaigns-upsert]";
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -24,9 +25,28 @@ function getAdAccountId(): string {
   return v.trim();
 }
 
-async function getAppAccessToken(): Promise<string> {
-  const appId = getEnv("FB_APP_ID");
-  const appSecret = getEnv("FB_APP_SECRET");
+async function resolveFacebookAppCredentials(
+  supabase: ReturnType<typeof createClient>
+): Promise<{ appId: string; appSecret: string }> {
+  const { data, error } = await supabase
+    .from("facebook_ads_integration_settings")
+    .select("fb_app_id, fb_app_secret")
+    .eq("id", 1)
+    .maybeSingle();
+  const fromId = !error && data?.fb_app_id ? String(data.fb_app_id).trim() : "";
+  const fromSecret = !error && data?.fb_app_secret ? String(data.fb_app_secret).trim() : "";
+  const appId = fromId || Deno.env.get("FB_APP_ID")?.trim() || "";
+  const appSecret = fromSecret || Deno.env.get("FB_APP_SECRET")?.trim() || "";
+  if (!appId || !appSecret) {
+    throw new Error(
+      "Missing Facebook app credentials: set fb_app_id and fb_app_secret in facebook_ads_integration_settings (Settings) or FB_APP_ID / FB_APP_SECRET secrets."
+    );
+  }
+  return { appId, appSecret };
+}
+
+async function getAppAccessToken(supabase: ReturnType<typeof createClient>): Promise<string> {
+  const { appId, appSecret } = await resolveFacebookAppCredentials(supabase);
   const url = `https://graph.facebook.com/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&grant_type=client_credentials`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Facebook OAuth: ${res.status} ${await res.text()}`);
@@ -35,20 +55,31 @@ async function getAppAccessToken(): Promise<string> {
   return json.access_token;
 }
 
-async function getAccessToken(): Promise<string> {
+/** DB token (Settings) → env FB_ACCESS_TOKEN → app token */
+async function resolveFacebookAccessToken(
+  supabase: ReturnType<typeof createClient>
+): Promise<string> {
+  const { data, error } = await supabase
+    .from("facebook_ads_integration_settings")
+    .select("access_token")
+    .eq("id", 1)
+    .maybeSingle();
+  if (!error && data?.access_token && String(data.access_token).trim().length > 0) {
+    return String(data.access_token).trim();
+  }
   const userToken = Deno.env.get("FB_ACCESS_TOKEN");
   if (userToken?.trim()) return userToken.trim();
-  return getAppAccessToken();
+  return getAppAccessToken(supabase);
 }
 
 async function graphGetAll<T>(
+  token: string,
   path: string,
   params: Record<string, string>,
   extractData: (json: { data?: T[]; paging?: { next?: string } }) => T[] = (j) => j.data ?? []
 ): Promise<T[]> {
   const out: T[] = [];
   let nextUrl: string | null = `${path}?${new URLSearchParams(params)}`;
-  const token = await getAccessToken();
   while (nextUrl) {
     const fullUrl = nextUrl.startsWith("http") ? nextUrl : `https://graph.facebook.com/${GRAPH_VERSION}${nextUrl}`;
     const url = fullUrl.includes("access_token=") ? fullUrl : `${fullUrl}${fullUrl.includes("?") ? "&" : "?"}access_token=${token}`;
@@ -227,6 +258,9 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    const supabase = createClient(getEnv("SUPABASE_URL"), getEnv("SUPABASE_SERVICE_ROLE_KEY"));
+    const graphToken = await resolveFacebookAccessToken(supabase);
+
     const rawAccountId = getAdAccountId();
     const adAccountId = rawAccountId.toLowerCase().startsWith("act_") ? rawAccountId : `act_${rawAccountId}`;
     const accountId = adAccountId.startsWith("act_") ? adAccountId : `act_${adAccountId}`;
@@ -237,6 +271,7 @@ Deno.serve(async (req: Request) => {
     ].join(",");
 
     const insights = await graphGetAll<InsightRow>(
+      graphToken,
       `/${adAccountId}/insights`,
       {
         level: "ad",
@@ -262,7 +297,6 @@ Deno.serve(async (req: Request) => {
 
     console.log(LOG, "insights", insights.length, "rows", uniqueRows.length);
 
-    const supabase = createClient(getEnv("SUPABASE_URL"), getEnv("SUPABASE_SERVICE_ROLE_KEY"));
     const { error: seqErr } = await supabase.rpc("reset_facebook_campaigns_data_sequence");
     if (seqErr) console.warn(LOG, "facebook_campaigns_data sequence", seqErr.message);
 

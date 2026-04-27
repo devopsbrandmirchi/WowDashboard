@@ -35,7 +35,7 @@ export function useUserPermissions() {
       try {
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
-          .select('role')
+          .select('role, role_id')
           .eq('id', user.id)
           .maybeSingle();
 

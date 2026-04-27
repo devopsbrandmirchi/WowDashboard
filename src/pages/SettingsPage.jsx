@@ -1,8 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { supabase, invokeEdgeFunction } from '../lib/supabase.js';
+import { getFacebookOAuthRedirectUri, FB_DIALOG_GRAPH_VERSION } from '../lib/facebookOAuth.js';
+import { useUserPermissions } from '../hooks/useUserPermissions';
+import { ROLE_IDS } from '../constants/roles.js';
+
+const META_ADMIN_ROLE_IDS = [ROLE_IDS.SUPER_ADMIN, ROLE_IDS.ADMIN];
 
 function formatSyncLogStats(platform, meta) {
   if (!meta || typeof meta !== 'object') return '—';
@@ -64,8 +69,229 @@ const SETTINGS_NAV = [
   { id: 'branding', label: 'White Label & Branding' },
 ];
 
+const META_TOKEN_DOCS_URL =
+  'https://developers.facebook.com/docs/facebook-login/guides/access-tokens#getting-long-lived-user-access-tokens';
+
+function MetaFacebookConnectPanel({ showNotification, canAdminMeta, permissionsLoading }) {
+  const [metaConnected, setMetaConnected] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(true);
+  const [showTokenForm, setShowTokenForm] = useState(false);
+  const [showAppCredentials, setShowAppCredentials] = useState(false);
+  const [tokenInput, setTokenInput] = useState('');
+  const [metaAppId, setMetaAppId] = useState('');
+  const [metaAppSecret, setMetaAppSecret] = useState('');
+  const [hasAppSecret, setHasAppSecret] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savingApp, setSavingApp] = useState(false);
+
+  const oauthRedirectDisplay = getFacebookOAuthRedirectUri();
+
+  const loadMetaStatus = useCallback(async () => {
+    setStatusLoading(true);
+    try {
+      const { data, error } = await invokeEdgeFunction('save-facebook-meta-token', {}, { method: 'GET' });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.message || String(data.error));
+      setMetaConnected(!!data?.connected);
+      setMetaAppId(typeof data?.fb_app_id === 'string' ? data.fb_app_id : '');
+      setHasAppSecret(!!data?.has_app_secret);
+    } catch {
+      setMetaConnected(false);
+      setMetaAppId('');
+      setHasAppSecret(false);
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadMetaStatus();
+  }, [loadMetaStatus]);
+
+  const handleSaveToken = async () => {
+    const t = tokenInput.trim();
+    if (t.length < 20) {
+      showNotification('Paste a valid Meta access token (at least 20 characters).');
+      return;
+    }
+    setSaving(true);
+    try {
+      const { data, error } = await invokeEdgeFunction('save-facebook-meta-token', {
+        access_token: t,
+      });
+      if (error) throw new Error(error.message || 'Request failed');
+      if (data?.error) throw new Error(data.message || String(data.error));
+      showNotification(typeof data?.message === 'string' ? data.message : 'Meta access token saved.');
+      setTokenInput('');
+      setShowTokenForm(false);
+      loadMetaStatus();
+    } catch (e) {
+      showNotification(e?.message || String(e) || 'Could not save token.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startFacebookOAuth = () => {
+    if (!canAdminMeta) {
+      showNotification('Only Super Admin or Admin can connect Meta.');
+      return;
+    }
+    const appId = metaAppId.trim();
+    if (!appId) {
+      showNotification('Save Meta App ID first (Set app ID & secret), then use Connect.');
+      setShowAppCredentials(true);
+      return;
+    }
+    const state = crypto.randomUUID();
+    sessionStorage.setItem('fb_oauth_state', state);
+    const redirectUri = getFacebookOAuthRedirectUri();
+    const scope = encodeURIComponent('ads_read');
+    const authUrl =
+      `https://www.facebook.com/${FB_DIALOG_GRAPH_VERSION}/dialog/oauth` +
+      `?client_id=${encodeURIComponent(appId)}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&state=${encodeURIComponent(state)}` +
+      '&response_type=code' +
+      `&scope=${scope}`;
+    window.location.assign(authUrl);
+  };
+
+  const handleSaveAppCredentials = async () => {
+    const id = metaAppId.trim();
+    const secret = metaAppSecret.trim();
+    if (!id && !secret) {
+      showNotification('Enter Meta App ID and/or a new App Secret to save.');
+      return;
+    }
+    setSavingApp(true);
+    try {
+      const payload = { fb_app_id: id };
+      if (secret) payload.fb_app_secret = secret;
+      const { data, error } = await invokeEdgeFunction('save-facebook-meta-token', payload);
+      if (error) throw new Error(error.message || 'Request failed');
+      if (data?.error) throw new Error(data.message || String(data.error));
+      showNotification(typeof data?.message === 'string' ? data.message : 'Meta app credentials saved.');
+      setMetaAppSecret('');
+      setShowAppCredentials(false);
+      loadMetaStatus();
+    } catch (e) {
+      showNotification(e?.message || String(e) || 'Could not save app credentials.');
+    } finally {
+      setSavingApp(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="wl-settings-status-row wl-settings-status-row--bar">
+        <span className="wl-settings-status-label">Facebook / Meta Ads</span>
+        <span
+          className={`wl-badge ${metaConnected ? 'wl-badge--connected' : 'wl-badge--pending'}`}
+          aria-live="polite"
+        >
+          {statusLoading ? 'Checking…' : metaConnected ? 'Connected' : 'Not connected'}
+        </span>
+        <span className="wl-meta-connect-spacer" aria-hidden="true" />
+        <button
+          type="button"
+          className="wl-btn wl-btn--primary"
+          onClick={startFacebookOAuth}
+          disabled={statusLoading || permissionsLoading || !canAdminMeta}
+          title={!canAdminMeta ? 'Only Super Admin or Admin can connect Meta.' : undefined}
+        >
+          {metaConnected ? 'Reconnect Facebook / Meta' : 'Connect Facebook / Meta'}
+        </button>
+        {/* <button
+          type="button"
+          className="wl-btn wl-btn--outline"
+          onClick={() => setShowAppCredentials((v) => !v)}
+          disabled={statusLoading}
+        >
+          {showAppCredentials ? 'Hide app ID & secret' : 'Set app ID & secret'}
+        </button> */}
+      </div>
+      {/* <p className="wl-settings-desc wl-settings-desc--below-bar">
+        <strong>Connect</strong> signs in with Facebook and saves a long-lived token for sync. In the Meta developer app,
+        add this exact redirect URI under Facebook Login → Settings → <strong>Valid OAuth Redirect URIs</strong>:{' '}
+        <span className="wl-td-mono">{oauthRedirectDisplay || 'https://your-domain.com/'}</span>{' '}
+        (include the trailing slash if your site uses it). App ID and secret are read from saved settings before Edge
+        secrets. See also the{' '}
+        <a href={META_TOKEN_DOCS_URL} target="_blank" rel="noopener noreferrer">
+          Meta token guide
+        </a>
+        .
+      </p> */}
+      <p className="wl-settings-desc" style={{ marginTop: 8 }}>
+        <button
+          type="button"
+          className="wl-btn wl-btn--outline wl-btn--sm"
+          onClick={() => setShowTokenForm((v) => !v)}
+          disabled={statusLoading}
+        >
+          {showTokenForm ? 'Hide manual token' : 'Paste access token instead'}
+        </button>
+      </p>
+      {showAppCredentials && (
+        <div className="wl-form-row" style={{ marginTop: 16, maxWidth: 560 }}>
+          <label htmlFor="wl-meta-app-id">Meta App ID</label>
+          <input
+            id="wl-meta-app-id"
+            type="text"
+            autoComplete="off"
+            placeholder="e.g. 1234567890123456"
+            value={metaAppId}
+            onChange={(e) => setMetaAppId(e.target.value)}
+            disabled={statusLoading || savingApp}
+          />
+          <label htmlFor="wl-meta-app-secret" style={{ marginTop: 12 }}>
+            Meta App Secret
+          </label>
+          <input
+            id="wl-meta-app-secret"
+            type="password"
+            autoComplete="new-password"
+            placeholder={hasAppSecret ? 'Leave blank to keep current secret; enter new value to replace' : 'App secret from Meta developer dashboard'}
+            value={metaAppSecret}
+            onChange={(e) => setMetaAppSecret(e.target.value)}
+            disabled={statusLoading || savingApp}
+          />
+          <span className="wl-form-hint">Super Admin or Admin only.</span>
+          <div style={{ marginTop: 12 }}>
+            <button type="button" className="wl-btn wl-btn--primary" onClick={handleSaveAppCredentials} disabled={savingApp || statusLoading}>
+              {savingApp ? 'Saving…' : 'Save app ID & secret'}
+            </button>
+          </div>
+        </div>
+      )}
+      {showTokenForm && (
+        <div className="wl-form-row" style={{ marginTop: 16, maxWidth: 560 }}>
+          <label htmlFor="wl-meta-access-token">Access token</label>
+          <input
+            id="wl-meta-access-token"
+            type="password"
+            autoComplete="off"
+            placeholder="Paste long-lived user or system user token (ads_read)"
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
+          />
+          <span className="wl-form-hint">Super Admin or Admin only. Sync prefers this token over the FB_ACCESS_TOKEN Edge secret.</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
+            <button type="button" className="wl-btn wl-btn--primary" onClick={handleSaveToken} disabled={saving}>
+              {saving ? 'Saving…' : 'Save access token'}
+            </button>
+            <button type="button" className="wl-btn wl-btn--outline" onClick={() => { setShowTokenForm(false); setTokenInput(''); }} disabled={saving}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 /** Same UX for Google, Reddit, Meta, TikTok, Microsoft: Connect → date range + Sync; optional ads_sync_by_date_log table */
-function AdsPlatformPanel({ showNotification, title, connectDescription, onSync, syncLogPlatform }) {
+function AdsPlatformPanel({ showNotification, title, connectDescription, onSync, syncLogPlatform, connectionSlot = null }) {
   const [connected, setConnected] = useState(true);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -137,7 +363,8 @@ function AdsPlatformPanel({ showNotification, title, connectDescription, onSync,
   return (
     <div className="wl-settings-card">
       <h2 className="wl-settings-subtitle">{title}</h2>
-      <p className="wl-settings-desc" style={{ marginTop: 8 }}>
+      {connectionSlot}
+      <p className="wl-settings-desc" style={{ marginTop: connectionSlot ? 16 : 8 }}>
         Choose a date range and run a sync for your linked accounts.
       </p>
       <div className="wl-ads-date-sync">
@@ -314,10 +541,32 @@ function BrandingPanel({ branding, updateBranding, colors, updateColors, resetSe
 
 export function SettingsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { logout, user } = useAuth();
   const { branding, updateBranding, colors, updateColors, resetSettings, showNotification } = useApp();
+  const { role, roleId, loading: permissionsLoading } = useUserPermissions();
   const [profile, setProfile] = useState(null);
   const [activeNav, setActiveNav] = useState('google-ads');
+
+  const canAdminMeta =
+    role === 'super_admin' ||
+    role === 'admin' ||
+    (roleId != null && META_ADMIN_ROLE_IDS.includes(roleId));
+
+  useEffect(() => {
+    const pending = sessionStorage.getItem('wow_settings_nav_after_oauth');
+    if (pending === 'meta') {
+      sessionStorage.removeItem('wow_settings_nav_after_oauth');
+      setActiveNav('meta');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (location.state?.openMetaOAuth) {
+      setActiveNav('meta');
+      navigate('.', { replace: true, state: {} });
+    }
+  }, [location.state, navigate]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -419,6 +668,13 @@ export function SettingsPage() {
                 showNotification={showNotification}
                 title="Facebook / Meta Ads"
                 connectDescription="Link Meta Business Manager to sync campaign performance across your client accounts."
+                connectionSlot={
+                  <MetaFacebookConnectPanel
+                    showNotification={showNotification}
+                    canAdminMeta={canAdminMeta}
+                    permissionsLoading={permissionsLoading}
+                  />
+                }
                 syncLogPlatform="facebook_ads"
                 onSync={async (dateFrom, dateTo) => {
                   const { data, error } = await invokeEdgeFunction('fetch-facebook-campaigns-upsert', {
