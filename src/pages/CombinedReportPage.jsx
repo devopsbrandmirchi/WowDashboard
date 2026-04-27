@@ -111,6 +111,12 @@ function useCombinedSummary() {
   const getImpr = (k) => (k && Number(k.impressions ?? 0));
   const getCpa = (k) => (k && Number(k.cpa ?? 0));
   const getRoas = (k) => (k && Number(k.roas ?? 0));
+  const getConvRate = (k) => {
+    if (!k) return 0;
+    const c = getClicks(k);
+    const v = getConv(k);
+    return c ? (v / c) * 100 : 0;
+  };
 
   const rows = [
     {
@@ -121,6 +127,7 @@ function useCombinedSummary() {
       impressions: getImpr(google.kpis),
       clicks: getClicks(google.kpis),
       conversions: getConv(google.kpis),
+      conv_rate: getConvRate(google.kpis),
       cpa: getCpa(google.kpis),
       roas: getRoas(google.kpis),
     },
@@ -132,6 +139,7 @@ function useCombinedSummary() {
       impressions: getImpr(meta.kpis),
       clicks: getClicks(meta.kpis),
       conversions: getConv(meta.kpis),
+      conv_rate: getConvRate(meta.kpis),
       cpa: getCpa(meta.kpis),
       roas: getRoas(meta.kpis),
     },
@@ -143,6 +151,7 @@ function useCombinedSummary() {
       impressions: getImpr(reddit.kpis),
       clicks: getClicks(reddit.kpis),
       conversions: getConv(reddit.kpis),
+      conv_rate: getConvRate(reddit.kpis),
       cpa: getCpa(reddit.kpis),
       roas: getRoas(reddit.kpis),
     },
@@ -154,6 +163,7 @@ function useCombinedSummary() {
       impressions: getImpr(microsoft.kpis),
       clicks: getClicks(microsoft.kpis),
       conversions: getConv(microsoft.kpis),
+      conv_rate: getConvRate(microsoft.kpis),
       cpa: getCpa(microsoft.kpis),
       roas: getRoas(microsoft.kpis),
     },
@@ -165,6 +175,7 @@ function useCombinedSummary() {
       impressions: getImpr(tiktok.kpis),
       clicks: getClicks(tiktok.kpis),
       conversions: getConv(tiktok.kpis),
+      conv_rate: getConvRate(tiktok.kpis),
       cpa: getCpa(tiktok.kpis),
       roas: getRoas(tiktok.kpis),
     },
@@ -182,6 +193,7 @@ function useCombinedSummary() {
     impressions: totalImpressions,
     clicks: totalClicks,
     conversions: totalConversions,
+    conv_rate: totalClicks ? (totalConversions / totalClicks) * 100 : 0,
     cpa: totalConversions ? totalCost / totalConversions : 0,
     roas: calculateWeightedRoas(rows.map((r) => ({ cost: r.cost, roas: r.roas }))),
   };
@@ -274,8 +286,9 @@ function normalizeDimRow(item, platformId, platformLabel) {
   const conversions = Number(item.conversions ?? item.purchases) || 0;
   const revenue = Number(item.revenue ?? item.conversions_value) || 0;
   const cpa = conversions ? cost / conversions : 0;
+  const conv_rate = clicks ? (conversions / clicks) * 100 : 0;
   const roas = calculateRoas(cost, revenue);
-  return { name, cost, impressions, clicks, conversions, revenue, cpa, roas, platform: platformId, platformLabel };
+  return { name, cost, impressions, clicks, conversions, conv_rate, revenue, cpa, roas, platform: platformId, platformLabel };
 }
 
 export function CombinedReportPage() {
@@ -331,6 +344,7 @@ export function CombinedReportPage() {
         existing.conversions += row.conversions || 0;
         existing.revenue += row.revenue || 0;
         existing.cpa = existing.conversions ? existing.cost / existing.conversions : 0;
+        existing.conv_rate = existing.clicks ? (existing.conversions / existing.clicks) * 100 : 0;
         existing.roas = calculateRoas(existing.cost, existing.revenue);
       } else {
         aggregated.set(key, { ...row });
@@ -358,6 +372,7 @@ export function CombinedReportPage() {
         existing.conversions += row.conversions || 0;
         existing.revenue += row.revenue || 0;
         existing.cpa = existing.conversions ? existing.cost / existing.conversions : 0;
+        existing.conv_rate = existing.clicks ? (existing.conversions / existing.clicks) * 100 : 0;
         existing.roas = calculateRoas(existing.cost, existing.revenue);
       } else {
         aggregated.set(key, { ...row });
@@ -385,6 +400,7 @@ export function CombinedReportPage() {
         existing.conversions += row.conversions || 0;
         existing.revenue += row.revenue || 0;
         existing.cpa = existing.conversions ? existing.cost / existing.conversions : 0;
+        existing.conv_rate = existing.clicks ? (existing.conversions / existing.clicks) * 100 : 0;
         existing.roas = calculateRoas(existing.cost, existing.revenue);
       } else {
         aggregated.set(key, { ...row });
@@ -404,6 +420,7 @@ export function CombinedReportPage() {
         { label: 'Impressions', cell: (r) => fI(r.impressions) },
         { label: 'Clicks', cell: (r) => fI(r.clicks) },
         { label: 'Conversions', cell: (r) => fI(r.conversions ?? r.purchases) },
+        { label: 'Conv. Rate', cell: (r) => fP(r.conv_rate ?? (r.clicks ? ((r.conversions || 0) / r.clicks) * 100 : 0)) },
         { label: 'CPA', cell: (r) => fU(r.cpa) },
       ];
       exportCSV(cols, summaryRows, 'combined-report-platform.csv');
@@ -415,6 +432,7 @@ export function CombinedReportPage() {
         { label: 'Impressions', cell: (r) => fI(r.impressions) },
         { label: 'Clicks', cell: (r) => fI(r.clicks) },
         { label: 'Conversions', cell: (r) => fI(r.conversions) },
+        { label: 'Conv. Rate', cell: (r) => fP(r.conv_rate ?? (r.clicks ? (r.conversions / r.clicks) * 100 : 0)) },
         { label: 'CPA', cell: (r) => fU(r.cpa) },
       ];
       exportCSV(cols, countryRows, 'combined-report-country.csv');
@@ -426,6 +444,7 @@ export function CombinedReportPage() {
         { label: 'Impressions', cell: (r) => fI(r.impressions) },
         { label: 'Clicks', cell: (r) => fI(r.clicks) },
         { label: 'Conversions', cell: (r) => fI(r.conversions) },
+        { label: 'Conv. Rate', cell: (r) => fP(r.conv_rate ?? (r.clicks ? (r.conversions / r.clicks) * 100 : 0)) },
         { label: 'CPA', cell: (r) => fU(r.cpa) },
       ];
       exportCSV(cols, showRows, 'combined-report-show.csv');
@@ -437,6 +456,7 @@ export function CombinedReportPage() {
         { label: 'Impressions', cell: (r) => fI(r.impressions) },
         { label: 'Clicks', cell: (r) => fI(r.clicks) },
         { label: 'Conversions', cell: (r) => fI(r.conversions) },
+        { label: 'Conv. Rate', cell: (r) => fP(r.conv_rate ?? (r.clicks ? (r.conversions / r.clicks) * 100 : 0)) },
         { label: 'CPA', cell: (r) => fU(r.cpa) },
       ];
       exportCSV(cols, productRows, 'combined-report-product.csv');
@@ -543,15 +563,17 @@ export function CombinedReportPage() {
       { label: 'Impressions', value: fI(totalRow.impressions) },
       { label: 'Clicks', value: fI(totalRow.clicks) },
       { label: 'Conversions', value: fI(totalRow.conversions) },
+      { label: 'Conv. Rate', value: fP(totalRow.conv_rate) },
       { label: 'CPA', value: fU(totalRow.cpa) },
     ];
-    const headers = ['Platform', 'Cost', 'Impressions', 'Clicks', 'Conversions', 'CPA'];
+    const headers = ['Platform', 'Cost', 'Impressions', 'Clicks', 'Conversions', 'Conv. Rate', 'CPA'];
     const tableRows = summaryRows.map((r) => [
       r.label,
       fU(r.cost),
       fI(r.impressions),
       fI(r.clicks),
       fI(r.conversions),
+      fP(r.conv_rate ?? (r.clicks ? ((r.conversions || 0) / r.clicks) * 100 : 0)),
       fU(r.cpa),
     ]);
     exportReportPdf({
@@ -658,6 +680,13 @@ export function CombinedReportPage() {
                 <span className="rkpi-label">Conversions</span>
               </div>
               <div className="rkpi-value">{loading ? '…' : fI(totalRow.conversions)}</div>
+            </div>
+            <div className="rkpi-card">
+              <div className="rkpi-header">
+                <span className="rkpi-icon">📈</span>
+                <span className="rkpi-label">Conv. Rate</span>
+              </div>
+              <div className="rkpi-value">{loading ? '…' : fP(totalRow.conv_rate)}</div>
             </div>
             <div className="rkpi-card">
               <div className="rkpi-header">
@@ -791,6 +820,7 @@ export function CombinedReportPage() {
                         <th className="text-right">Impressions</th>
                         <th className="text-right">Clicks</th>
                         <th className="text-right">Conversions</th>
+                        <th className="text-right">Conv. Rate</th>
                         <th className="text-right">CPA</th>
                       </tr>
                     </thead>
@@ -817,6 +847,7 @@ export function CombinedReportPage() {
                           <td className="text-right">{fI(r.impressions)}</td>
                           <td className="text-right">{fI(r.clicks)}</td>
                           <td className="text-right">{fI(r.conversions)}</td>
+                          <td className="text-right">{fP(r.conv_rate ?? (r.clicks ? ((r.conversions || 0) / r.clicks) * 100 : 0))}</td>
                           <td className="text-right">{fU(r.cpa)}</td>
                         </tr>
                       ))}
@@ -848,13 +879,14 @@ export function CombinedReportPage() {
                         <th className="text-right">Impressions</th>
                         <th className="text-right">Clicks</th>
                         <th className="text-right">Conversions</th>
+                        <th className="text-right">Conv. Rate</th>
                         <th className="text-right">CPA</th>
                       </tr>
                     </thead>
                     <tbody>
                       {countryRows.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="gads-empty-cell">
+                          <td colSpan={7} className="gads-empty-cell">
                             No country data for the selected platform(s).
                           </td>
                         </tr>
@@ -882,6 +914,7 @@ export function CombinedReportPage() {
                           <td className="text-right">{fI(r.impressions)}</td>
                           <td className="text-right">{fI(r.clicks)}</td>
                           <td className="text-right">{fI(r.conversions)}</td>
+                          <td className="text-right">{fP(r.conv_rate ?? (r.clicks ? (r.conversions / r.clicks) * 100 : 0))}</td>
                           <td className="text-right">{fU(r.cpa)}</td>
                         </tr>
                       ))}
@@ -913,13 +946,14 @@ export function CombinedReportPage() {
                         <th className="text-right">Impressions</th>
                         <th className="text-right">Clicks</th>
                         <th className="text-right">Conversions</th>
+                        <th className="text-right">Conv. Rate</th>
                         <th className="text-right">CPA</th>
                       </tr>
                     </thead>
                     <tbody>
                       {showRows.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="gads-empty-cell">
+                          <td colSpan={7} className="gads-empty-cell">
                             No show data for the selected platform(s).
                           </td>
                         </tr>
@@ -947,6 +981,7 @@ export function CombinedReportPage() {
                           <td className="text-right">{fI(r.impressions)}</td>
                           <td className="text-right">{fI(r.clicks)}</td>
                           <td className="text-right">{fI(r.conversions)}</td>
+                          <td className="text-right">{fP(r.conv_rate ?? (r.clicks ? (r.conversions / r.clicks) * 100 : 0))}</td>
                           <td className="text-right">{fU(r.cpa)}</td>
                         </tr>
                       ))}
@@ -978,13 +1013,14 @@ export function CombinedReportPage() {
                         <th className="text-right">Impressions</th>
                         <th className="text-right">Clicks</th>
                         <th className="text-right">Conversions</th>
+                        <th className="text-right">Conv. Rate</th>
                         <th className="text-right">CPA</th>
                       </tr>
                     </thead>
                     <tbody>
                       {productRows.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="gads-empty-cell">
+                          <td colSpan={7} className="gads-empty-cell">
                             No product data for the selected platform(s).
                           </td>
                         </tr>
@@ -1012,6 +1048,7 @@ export function CombinedReportPage() {
                           <td className="text-right">{fI(r.impressions)}</td>
                           <td className="text-right">{fI(r.clicks)}</td>
                           <td className="text-right">{fI(r.conversions)}</td>
+                          <td className="text-right">{fP(r.conv_rate ?? (r.clicks ? (r.conversions / r.clicks) * 100 : 0))}</td>
                           <td className="text-right">{fU(r.cpa)}</td>
                         </tr>
                       ))}

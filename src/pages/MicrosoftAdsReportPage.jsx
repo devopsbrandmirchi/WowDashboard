@@ -29,6 +29,7 @@ const CHART_METRICS = [
   { key: 'ctr', label: 'CTR', fmt: fP, color: '#8b5cf6', axis: 'right' },
   { key: 'cpc', label: 'CPC', fmt: fU, color: '#3b82f6', axis: 'right' },
   { key: 'conversions', label: 'Conv.', fmt: fI, color: '#ec4899', axis: 'left' },
+  { key: 'conv_rate', label: 'Conv. Rate', fmt: fP, color: '#14b8a6', axis: 'right' },
   { key: 'cpa', label: 'CPA', fmt: fU, color: '#f97316', axis: 'right' },
 ];
 
@@ -39,6 +40,7 @@ const KPI_CATALOG = [
   { key: 'ctr', label: 'CTR', fmt: fP, icon: '📊', category: 'General Performance', inverse: false },
   { key: 'cpc', label: 'Avg CPC', fmt: fU, icon: '💵', category: 'General Performance', inverse: true },
   { key: 'purchases', label: 'Purchases', fmt: fI, icon: '🎯', category: 'Conversions', inverse: false },
+  { key: 'conv_rate', label: 'Conv. Rate', fmt: fP, icon: '📈', category: 'Conversions', inverse: false },
   { key: 'cpa', label: 'CPA', fmt: fU, icon: '🏷', category: 'Conversions', inverse: true },
   { key: 'roas', label: 'ROAS', fmt: fR, icon: '🔥', category: 'Conversions', inverse: false },
 ];
@@ -74,15 +76,21 @@ function computeTotals(rows) {
   t.cpc = t.clicks ? t.cost / t.clicks : 0;
   t.cpm = t.impressions ? (t.cost / (t.impressions / 1000)) : 0;
   t.cpa = t.purchases ? t.cost / t.purchases : 0;
+  t.conv_rate = t.clicks ? (t.purchases / t.clicks) * 100 : 0;
   return t;
 }
 
 function sortRows(rows, col, dir) {
   return [...rows].sort((a, b) => {
+    const d = dir === 'asc' ? 1 : -1;
+    if (col === 'conv_rate') {
+      const ra = a.clicks ? ((a.purchases || 0) / a.clicks) * 100 : 0;
+      const rb = b.clicks ? ((b.purchases || 0) / b.clicks) * 100 : 0;
+      return d * (ra - rb);
+    }
     const sortCol = col === 'conversions' ? 'purchases' : col;
     const va = sortCol === 'name' ? a.name : a[sortCol];
     const vb = sortCol === 'name' ? b.name : b[sortCol];
-    const d = dir === 'asc' ? 1 : -1;
     if (typeof va === 'string' && typeof vb === 'string') return d * va.localeCompare(vb);
     return d * ((+(va || 0)) - (+(vb || 0)));
   });
@@ -130,9 +138,10 @@ const METRIC_COLS = [
   { col: 'impressions', label: 'Impressions', align: 'r', cell: (r) => fI(r.impressions), total: (t) => t ? fI(t.impressions) : '' },
   { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => t ? fI(t.clicks) : '' },
   { col: 'purchases', label: 'Purchases', align: 'r', cell: (r) => fI(r.purchases), total: (t) => t ? fI(t.purchases) : '' },
+  { col: 'conv_rate', label: 'Conv. Rate', align: 'r', cell: (r) => fP(r.clicks ? ((r.purchases || 0) / r.clicks) * 100 : 0), total: (t) => (t ? fP(t.conv_rate) : '') },
+  { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => t ? fU(t.cpa) : '' },
   { col: 'cpc', label: 'CPC', align: 'r', cell: (r) => fU(r.cpc), total: (t) => t ? fU(t.cpc) : '' },
   { col: 'cpm', label: 'CPM', align: 'r', cell: (r) => fU(r.cpm), total: (t) => t ? fU(t.cpm) : '' },
-  { col: 'cpa', label: 'CPA', align: 'r', cell: (r) => fU(r.cpa), total: (t) => t ? fU(t.cpa) : '' },
   { col: 'ctr', label: 'CTR', align: 'r', cell: (r) => fP(r.ctr), total: (t) => t ? fP(t.ctr) : '' },
 ];
 
@@ -385,10 +394,13 @@ export function MicrosoftAdsReportPage() {
       const yAxisID = m.axis === 'right' ? 'y1' : 'y';
       if (m.axis === 'right') needsRight = true;
       else needsLeft = true;
-      const dataKey = m.key === 'conversions' ? 'conversions' : m.key;
       datasets.push({
         label: m.label,
-        data: dailyTrends.map((d) => +(d[dataKey] || 0)),
+        data: dailyTrends.map((d) => {
+          if (m.key === 'conv_rate') return d.clicks ? ((d.conversions || 0) / d.clicks) * 100 : 0;
+          const dataKey = m.key === 'conversions' ? 'conversions' : m.key;
+          return +(d[dataKey] || 0);
+        }),
         borderColor: m.color,
         backgroundColor: m.color + '18',
         tension: 0.35,
