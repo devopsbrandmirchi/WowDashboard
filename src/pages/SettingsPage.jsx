@@ -184,7 +184,7 @@ function MetaFacebookConnectPanel({ showNotification, canAdminMeta, permissionsL
 
   return (
     <>
-      <div className="wl-settings-status-row wl-settings-status-row--bar">
+      {/* <div className="wl-settings-status-row wl-settings-status-row--bar">
         <span className="wl-settings-status-label">Facebook / Meta Ads</span>
         <span
           className={`wl-badge ${metaConnected ? 'wl-badge--connected' : 'wl-badge--pending'}`}
@@ -202,16 +202,16 @@ function MetaFacebookConnectPanel({ showNotification, canAdminMeta, permissionsL
         >
           {metaConnected ? 'Reconnect Facebook / Meta' : 'Connect Facebook / Meta'}
         </button>
-        {/* <button
+         <button
           type="button"
           className="wl-btn wl-btn--outline"
           onClick={() => setShowAppCredentials((v) => !v)}
           disabled={statusLoading}
         >
           {showAppCredentials ? 'Hide app ID & secret' : 'Set app ID & secret'}
-        </button> */}
+        </button> 
       </div>
-      {/* <p className="wl-settings-desc wl-settings-desc--below-bar">
+       <p className="wl-settings-desc wl-settings-desc--below-bar">
         <strong>Connect</strong> signs in with Facebook and saves a long-lived token for sync. In the Meta developer app,
         add this exact redirect URI under Facebook Login → Settings → <strong>Valid OAuth Redirect URIs</strong>:{' '}
         <span className="wl-td-mono">{oauthRedirectDisplay || 'https://your-domain.com/'}</span>{' '}
@@ -221,7 +221,7 @@ function MetaFacebookConnectPanel({ showNotification, canAdminMeta, permissionsL
           Meta token guide
         </a>
         .
-      </p> */}
+      </p> 
       <p className="wl-settings-desc" style={{ marginTop: 8 }}>
         <button
           type="button"
@@ -231,7 +231,7 @@ function MetaFacebookConnectPanel({ showNotification, canAdminMeta, permissionsL
         >
           {showTokenForm ? 'Hide manual token' : 'Paste access token instead'}
         </button>
-      </p>
+      </p> */}
       {showAppCredentials && (
         <div className="wl-form-row" style={{ marginTop: 16, maxWidth: 560 }}>
           <label htmlFor="wl-meta-app-id">Meta App ID</label>

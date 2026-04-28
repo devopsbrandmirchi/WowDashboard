@@ -13,6 +13,35 @@ const CORS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+class HttpError extends Error {
+  status: number;
+  code: string;
+  details?: Record<string, unknown>;
+
+  constructor(status: number, code: string, message: string, details?: Record<string, unknown>) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+function getFacebookOAuthError(json: unknown): { code: number | null; subcode: number | null; message: string } | null {
+  if (!json || typeof json !== "object") return null;
+  const err = (json as { error?: { code?: unknown; error_subcode?: unknown } }).error;
+  if (!err || typeof err !== "object") return null;
+  const code = Number(err.code);
+  const subcode = Number(err.error_subcode);
+  const message = typeof (err as { message?: unknown }).message === "string"
+    ? String((err as { message?: string }).message)
+    : "";
+  return {
+    code: Number.isFinite(code) ? code : null,
+    subcode: Number.isFinite(subcode) ? subcode : null,
+    message,
+  };
+}
+
 function getEnv(name: string): string {
   const v = Deno.env.get(name);
   if (!v) throw new Error(`Missing env: ${name}`);
@@ -84,7 +113,29 @@ async function graphGetAll<T>(
     const fullUrl = nextUrl.startsWith("http") ? nextUrl : `https://graph.facebook.com/${GRAPH_VERSION}${nextUrl}`;
     const url = fullUrl.includes("access_token=") ? fullUrl : `${fullUrl}${fullUrl.includes("?") ? "&" : "?"}access_token=${token}`;
     const res = await fetch(url);
-    if (!res.ok) throw new Error(`Graph: ${res.status} ${await res.text()}`);
+    if (!res.ok) {
+      let bodyText = "";
+      let bodyJson: unknown = null;
+      try {
+        bodyText = await res.text();
+        bodyJson = bodyText ? JSON.parse(bodyText) : null;
+      } catch {
+        bodyJson = null;
+      }
+      const oauthErr = getFacebookOAuthError(bodyJson);
+      if (oauthErr?.code === 190) {
+        const isExpired = oauthErr.subcode === 463 || /expired/i.test(oauthErr.message);
+        throw new HttpError(
+          401,
+          isExpired ? "facebook_token_expired" : "facebook_token_invalid",
+          isExpired
+            ? "Facebook access token expired. Reconnect Facebook / Meta in Settings and try sync again."
+            : "Facebook access token is invalid or malformed. Reconnect Facebook / Meta in Settings, or save a valid access token, then try sync again.",
+          bodyJson && typeof bodyJson === "object" ? (bodyJson as Record<string, unknown>) : undefined
+        );
+      }
+      throw new Error(`Graph: ${res.status} ${bodyText || "Upstream request failed"}`);
+    }
     const json = (await res.json()) as { data?: T[]; paging?: { next?: string } };
     out.push(...extractData(json));
     nextUrl = json.paging?.next ?? null;
@@ -392,11 +443,28 @@ Deno.serve(async (req: Request) => {
     console.log(LOG, JSON.stringify(result));
     return new Response(JSON.stringify(result), { status: 200, headers: { ...CORS, "Content-Type": "application/json" } });
   } catch (err) {
+    if (err instanceof HttpError) {
+      console.error(LOG, err.code, err.message);
+      return new Response(
+        JSON.stringify({
+          error: err.code,
+          message: err.message,
+          details: err.details ?? null,
+        }),
+        {
+          status: err.status,
+          headers: { ...CORS, "Content-Type": "application/json" },
+        }
+      );
+    }
     const message = err instanceof Error ? err.message : String(err);
     console.error(LOG, message);
-    return new Response(JSON.stringify({ error: "fetch_facebook_campaigns_upsert_failed", message }), {
-      status: 500,
-      headers: { ...CORS, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ error: "fetch_facebook_campaigns_upsert_failed", message }),
+      {
+        status: 500,
+        headers: { ...CORS, "Content-Type": "application/json" },
+      }
+    );
   }
 });
