@@ -99,6 +99,7 @@ export const PAGE_TITLES = {
   dashboard: 'Executive Dashboard',
   'subscriptions-analytics': 'Subscription Analytics',
   'subscriptions-subscribers': 'Subscriber Intelligence',
+  'subscriptions-dating-apps': 'Dating app subscription data',
   'google-ads': 'Google Ads Performance',
   'meta-ads': 'Meta Ads Performance',
   'bing-ads': 'Bing / Microsoft Ads',

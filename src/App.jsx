@@ -27,6 +27,7 @@ import { MicrosoftCampaignsReferencePage } from './pages/MicrosoftCampaignsRefer
 import { ProfilePage } from './pages/ProfilePage';
 import { VimeoAnalyticsPage } from './pages/VimeoAnalyticsPage';
 import { SubscriberIntelligencePage } from './pages/SubscriberIntelligencePage';
+import { DatingAppSubscriptionDataPage } from './pages/DatingAppSubscriptionDataPage';
 import { invokeEdgeFunction } from './lib/supabase.js';
 import { getFacebookOAuthRedirectUri } from './lib/facebookOAuth.js';
 
@@ -34,6 +35,7 @@ const PATH_TO_PAGE = {
   '/': 'dashboard',
   '/subscriptions/analytics': 'subscriptions-analytics',
   '/subscriptions/subscribers': 'subscriptions-subscribers',
+  '/subscriptions/dating-apps': 'subscriptions-dating-apps',
   '/combined-reporting': 'combined-reporting',
   '/google-ads': 'google-ads',
   '/meta-ads': 'meta-ads',
@@ -72,6 +74,7 @@ const PAGE_TITLES = {
   'profile': 'Profile',
   'subscriptions-analytics': 'Subscription Analytics',
   'subscriptions-subscribers': 'Subscriber Intelligence',
+  'subscriptions-dating-apps': 'Dating app subscription data',
 };
 
 function CurrentPage({ forcePage }) {
@@ -110,6 +113,7 @@ function CurrentPage({ forcePage }) {
   if (page === 'profile') return <ProfilePage />;
   if (page === 'subscriptions-analytics') return <VimeoAnalyticsPage />;
   if (page === 'subscriptions-subscribers') return <SubscriberIntelligencePage />;
+  if (page === 'subscriptions-dating-apps') return <DatingAppSubscriptionDataPage />;
 
   return <DashboardPage />;
 }
@@ -252,7 +256,7 @@ export default function App() {
     <>
       <Routes>
         <Route path="/subscriptions/analytics" element={<AppContent forcePage="subscriptions-analytics" />} />
-        <Route path="/subscriptions/subscribers" element={<AppContent forcePage="subscriptions-subscribers" />} />
+        <Route path="/subscriptions/dating-apps" element={<AppContent forcePage="subscriptions-dating-apps" />} />
         <Route path="/settings/roles-permissions" element={<AppContent forcePage="roles-permissions" />} />
         <Route path="/settings/users" element={<AppContent forcePage="users" />} />
         <Route path="/settings/google-campaigns-reference" element={<AppContent forcePage="google-campaigns-reference" />} />

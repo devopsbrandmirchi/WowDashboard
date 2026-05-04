@@ -16,6 +16,7 @@ function permissionKeyToLabel(key) {
     'roles-permissions': 'Roles & permissions',
     'subscriptions-analytics': 'Subscription analytics',
     'subscriptions-subscribers': 'Subscriber intelligence',
+    'subscriptions-dating-apps': 'Dating app subscription data',
     'microsoft-campaigns-reference': 'Microsoft campaigns reference',
     'admin:manage_roles': 'Manage roles',
     'admin:manage_users': 'Manage users',

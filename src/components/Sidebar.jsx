@@ -39,6 +39,7 @@ const NAV_ITEMS = [
   },
   { id: 'subscriptions-analytics', label: 'Subscription Analytics', icon: '📈', section: 'Subscriptions' },
   { id: 'subscriptions-subscribers', label: 'Subscriber Intelligence', icon: '👥', section: 'Subscriptions' },
+  { id: 'subscriptions-dating-apps', label: 'Dating app data', icon: '💜', section: 'Subscriptions' },
   { id: 'settings',  label: 'White-Label Settings',  icon: '⚙️', section: 'System' },
   { id: 'roles-permissions', label: 'Roles & Permissions', icon: '🔐', section: 'System' },
   { id: 'users', label: 'Users', icon: '👤', section: 'System' },
@@ -65,6 +66,7 @@ const navItemById = new Map(NAV_ITEMS.map((item) => [item.id, item]));
 const PAGE_ROUTES = {
   'subscriptions-analytics': '/subscriptions/analytics',
   'subscriptions-subscribers': '/subscriptions/subscribers',
+  'subscriptions-dating-apps': '/subscriptions/dating-apps',
   'dashboard': '/',
   'combined-reporting': '/combined-reporting',
   'google-ads': '/google-ads',

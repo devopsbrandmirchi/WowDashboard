@@ -69,6 +69,7 @@ export const ALL_PERMISSION_KEYS = {
     'sidebar:reddit-ads',
     'sidebar:subscriptions-analytics',
     'sidebar:subscriptions-subscribers',
+    'sidebar:subscriptions-dating-apps',
     'sidebar:settings',
     'sidebar:roles-permissions',
     'sidebar:users',

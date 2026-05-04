@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { supabase, invokeEdgeFunction } from '../lib/supabase.js';
 import { getFacebookOAuthRedirectUri, FB_DIALOG_GRAPH_VERSION } from '../lib/facebookOAuth.js';
 import { useUserPermissions } from '../hooks/useUserPermissions';
+import { DatingAppSubscriptionImportPanel } from '../components/DatingAppSubscriptionImportPanel.jsx';
 import { ROLE_IDS } from '../constants/roles.js';
 
 const META_ADMIN_ROLE_IDS = [ROLE_IDS.SUPER_ADMIN, ROLE_IDS.ADMIN];
@@ -60,12 +61,13 @@ function fmtSyncAt(iso) {
   }
 }
 
-const SETTINGS_NAV = [
+const SETTINGS_NAV_BASE = [
   { id: 'google-ads', label: 'Google Ads' },
   { id: 'reddit', label: 'Reddit Ads' },
   { id: 'meta', label: 'Facebook / Meta Ads' },
   { id: 'tiktok', label: 'TikTok Ads' },
   { id: 'bing', label: 'Bing / Microsoft Ads' },
+  { id: 'dating-app-data', label: 'Dating app data' },
   { id: 'branding', label: 'White Label & Branding' },
 ];
 
@@ -544,9 +546,14 @@ export function SettingsPage() {
   const location = useLocation();
   const { logout, user } = useAuth();
   const { branding, updateBranding, colors, updateColors, resetSettings, showNotification } = useApp();
-  const { role, roleId, loading: permissionsLoading } = useUserPermissions();
+  const { role, roleId, loading: permissionsLoading, canAccessSidebar } = useUserPermissions();
   const [profile, setProfile] = useState(null);
   const [activeNav, setActiveNav] = useState('google-ads');
+
+  const settingsNavItems = useMemo(() => {
+    const showDating = canAccessSidebar('subscriptions-dating-apps');
+    return SETTINGS_NAV_BASE.filter((item) => item.id !== 'dating-app-data' || showDating);
+  }, [canAccessSidebar]);
 
   const canAdminMeta =
     role === 'super_admin' ||
@@ -567,6 +574,20 @@ export function SettingsPage() {
       navigate('.', { replace: true, state: {} });
     }
   }, [location.state, navigate]);
+
+  useEffect(() => {
+    if (!location.state?.openDatingAppImport || permissionsLoading) return;
+    if (canAccessSidebar('subscriptions-dating-apps')) {
+      setActiveNav('dating-app-data');
+    }
+    navigate('.', { replace: true, state: {} });
+  }, [location.state, navigate, canAccessSidebar, permissionsLoading]);
+
+  useEffect(() => {
+    if (activeNav === 'dating-app-data' && !canAccessSidebar('subscriptions-dating-apps')) {
+      setActiveNav('google-ads');
+    }
+  }, [activeNav, canAccessSidebar]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -614,7 +635,7 @@ export function SettingsPage() {
           <aside className="wl-settings-sidebar">
             <div className="wl-settings-nav-label">Settings</div>
             <nav className="wl-settings-nav" aria-label="Settings sections">
-              {SETTINGS_NAV.map((item) => (
+              {settingsNavItems.map((item) => (
                 <button
                   key={item.id}
                   type="button"
@@ -717,6 +738,9 @@ export function SettingsPage() {
                   if (data?.error) throw new Error(data.message || data.error);
                 }}
               />
+            )}
+            {activeNav === 'dating-app-data' && canAccessSidebar('subscriptions-dating-apps') && (
+              <DatingAppSubscriptionImportPanel showNotification={showNotification} />
             )}
             {activeNav === 'branding' && (
               <BrandingPanel
