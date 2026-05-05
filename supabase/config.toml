@@ -16,3 +16,6 @@ verify_jwt = false
 
 [functions.sync-microsoft-ads]
 verify_jwt = false
+
+[functions.send-daily-ad-spend-email]
+verify_jwt = false

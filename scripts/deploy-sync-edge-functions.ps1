@@ -17,7 +17,8 @@ $functions = @(
     "fetch-reddit-campaigns-upsert",
     "fetch-facebook-campaigns-upsert",
     "fetch-tiktok-campaigns-upsert",
-    "sync-microsoft-ads"
+    "sync-microsoft-ads",
+    "send-daily-ad-spend-email"
 )
 
 foreach ($name in $functions) {
