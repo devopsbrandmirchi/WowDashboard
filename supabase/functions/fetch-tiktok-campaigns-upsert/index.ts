@@ -515,7 +515,13 @@ Deno.serve(async (req: Request) => {
         .map((campaign_name) => ({ campaign_name }));
       if (toInsert.length > 0) {
         const { error: refErr } = await supabase.from("tiktok_campaigns_reference_data").insert(toInsert);
-        if (refErr) console.warn(LOG, "tiktok_campaigns_reference_data", refErr.message);
+        if (refErr) {
+          // Fail the run so missing reference campaigns are visible to operators.
+          const seqHint = refErr.message.includes("tiktok_campaigns_reference_data_pkey")
+            ? " Sequence may be out of sync; run setval on tiktok_campaigns_reference_data.id."
+            : "";
+          throw new Error(`tiktok_campaigns_reference_data insert: ${refErr.message}.${seqHint}`);
+        }
       }
     }
 
