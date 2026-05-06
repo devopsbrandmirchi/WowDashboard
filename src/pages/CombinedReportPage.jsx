@@ -305,6 +305,7 @@ export function CombinedReportPage() {
   const platformFilter = 'all'; // Always show all platforms
   const [colEditorOpen, setColEditorOpen] = useState(false);
   const colEditorRef = useRef(null);
+  const [expandedCountryKey, setExpandedCountryKey] = useState(null);
 
   const handleDatePickerApply = useCallback(
     ({ preset, dateFrom, dateTo }) => {
@@ -313,6 +314,10 @@ export function CombinedReportPage() {
     },
     [batchUpdateDate, refetch]
   );
+
+  useEffect(() => {
+    if (viewTab !== 'country') setExpandedCountryKey(null);
+  }, [viewTab]);
 
   const summaryRows = [...rows, totalRow];
   const chartTotals = useMemo(() => computeChartTotals(combinedDailyTrends), [combinedDailyTrends]);
@@ -332,25 +337,71 @@ export function CombinedReportPage() {
       const arr = countryData[pid] || [];
       arr.forEach((item) => out.push(normalizeDimRow(item, pid, platformLabels[pid])));
     });
-    // Aggregate duplicate countries into one row
     const aggregated = new Map();
     out.forEach((row) => {
       const key = row.name.toLowerCase().trim();
-      if (aggregated.has(key)) {
-        const existing = aggregated.get(key);
-        existing.cost += row.cost || 0;
-        existing.impressions += row.impressions || 0;
-        existing.clicks += row.clicks || 0;
-        existing.conversions += row.conversions || 0;
-        existing.revenue += row.revenue || 0;
-        existing.cpa = existing.conversions ? existing.cost / existing.conversions : 0;
-        existing.conv_rate = existing.clicks ? (existing.conversions / existing.clicks) * 100 : 0;
-        existing.roas = calculateRoas(existing.cost, existing.revenue);
-      } else {
-        aggregated.set(key, { ...row });
+      if (!aggregated.has(key)) {
+        aggregated.set(key, {
+          countryKey: key,
+          name: row.name,
+          cost: 0,
+          impressions: 0,
+          clicks: 0,
+          conversions: 0,
+          revenue: 0,
+          platformParts: new Map(),
+        });
       }
+      const agg = aggregated.get(key);
+      agg.cost += row.cost || 0;
+      agg.impressions += row.impressions || 0;
+      agg.clicks += row.clicks || 0;
+      agg.conversions += row.conversions || 0;
+      agg.revenue += row.revenue || 0;
+      const pid = row.platform;
+      if (!agg.platformParts.has(pid)) {
+        agg.platformParts.set(pid, {
+          platform: pid,
+          platformLabel: row.platformLabel,
+          cost: 0,
+          impressions: 0,
+          clicks: 0,
+          conversions: 0,
+          revenue: 0,
+        });
+      }
+      const plat = agg.platformParts.get(pid);
+      plat.cost += row.cost || 0;
+      plat.impressions += row.impressions || 0;
+      plat.clicks += row.clicks || 0;
+      plat.conversions += row.conversions || 0;
+      plat.revenue += row.revenue || 0;
     });
-    return Array.from(aggregated.values()).sort((a, b) => (b.cost || 0) - (a.cost || 0));
+    return Array.from(aggregated.values())
+      .map((agg) => {
+        const platformRows = Array.from(agg.platformParts.values())
+          .map((p) => ({
+            ...p,
+            cpa: p.conversions ? p.cost / p.conversions : 0,
+            conv_rate: p.clicks ? (p.conversions / p.clicks) * 100 : 0,
+            roas: calculateRoas(p.cost, p.revenue),
+          }))
+          .sort((a, b) => (b.cost || 0) - (a.cost || 0));
+        return {
+          countryKey: agg.countryKey,
+          name: agg.name,
+          cost: agg.cost,
+          impressions: agg.impressions,
+          clicks: agg.clicks,
+          conversions: agg.conversions,
+          revenue: agg.revenue,
+          cpa: agg.conversions ? agg.cost / agg.conversions : 0,
+          conv_rate: agg.clicks ? (agg.conversions / agg.clicks) * 100 : 0,
+          roas: calculateRoas(agg.cost, agg.revenue),
+          platformRows,
+        };
+      })
+      .sort((a, b) => (b.cost || 0) - (a.cost || 0));
   }, [countryData, platformFilter]);
 
   const showRows = useMemo(() => {
@@ -767,7 +818,14 @@ export function CombinedReportPage() {
           <div className="gads-tabs-row">
             <div className="gads-tabs">
               {VIEW_TABS.map((tab) => {
-                const displayCount = tab.id === 'combined' ? 1 : tab.id === 'country' ? countryRows.length : tab.id === 'show' ? showRows.length : productRows.length;
+                const displayCount =
+                  tab.id === 'combined'
+                    ? rows.length
+                    : tab.id === 'country'
+                      ? countryRows.length
+                      : tab.id === 'show'
+                        ? showRows.length
+                        : productRows.length;
                 return (
                   <button
                     key={tab.id}
@@ -891,9 +949,10 @@ export function CombinedReportPage() {
                           </td>
                         </tr>
                       )}
-                      {countryRows.map((r, i) => (
-                        <tr key={`${r.name}-${i}`}>
-                          {/* {showPlatformColumn && (
+                      {countryRows.map((r) => (
+                        <React.Fragment key={r.countryKey}>
+                          <tr>
+                            {/* {showPlatformColumn && (
                             <td>
                               <span
                                 style={{
@@ -909,14 +968,59 @@ export function CombinedReportPage() {
                               {r.platformLabel}
                             </td>
                           )} */} {/* Commented out - Platform column disabled */}
-                          <td><strong>{r.name}</strong></td>
-                          <td className="text-right">{fU(r.cost)}</td>
-                          <td className="text-right">{fI(r.impressions)}</td>
-                          <td className="text-right">{fI(r.clicks)}</td>
-                          <td className="text-right">{fI(r.conversions)}</td>
-                          <td className="text-right">{fP(r.conv_rate ?? (r.clicks ? (r.conversions / r.clicks) * 100 : 0))}</td>
-                          <td className="text-right">{fU(r.cpa)}</td>
-                        </tr>
+                            <td>
+                              <button
+                                type="button"
+                                className="combined-report-country-toggle"
+                                onClick={() =>
+                                  setExpandedCountryKey((k) => (k === r.countryKey ? null : r.countryKey))
+                                }
+                                aria-expanded={expandedCountryKey === r.countryKey}
+                                aria-label={
+                                  expandedCountryKey === r.countryKey
+                                    ? `Hide platforms for ${r.name}`
+                                    : `Show platforms for ${r.name}`
+                                }
+                              >
+                                <strong>{r.name}</strong>
+                                <span className="combined-report-country-chevron" aria-hidden>
+                                  {expandedCountryKey === r.countryKey ? ' ▾' : ' ▸'}
+                                </span>
+                              </button>
+                            </td>
+                            <td className="text-right">{fU(r.cost)}</td>
+                            <td className="text-right">{fI(r.impressions)}</td>
+                            <td className="text-right">{fI(r.clicks)}</td>
+                            <td className="text-right">{fI(r.conversions)}</td>
+                            <td className="text-right">{fP(r.conv_rate ?? (r.clicks ? (r.conversions / r.clicks) * 100 : 0))}</td>
+                            <td className="text-right">{fU(r.cpa)}</td>
+                          </tr>
+                          {expandedCountryKey === r.countryKey &&
+                            r.platformRows.map((p) => (
+                              <tr key={`${r.countryKey}-${p.platform}`} className="gads-sub-row">
+                                <td style={{ paddingLeft: 28 }}>
+                                  <span
+                                    style={{
+                                      display: 'inline-block',
+                                      width: 8,
+                                      height: 8,
+                                      borderRadius: 2,
+                                      backgroundColor: rows.find((x) => x.id === p.platform)?.color || '#999',
+                                      marginRight: 8,
+                                      verticalAlign: 'middle',
+                                    }}
+                                  />
+                                  <span style={{ fontWeight: 500 }}>{p.platformLabel}</span>
+                                </td>
+                                <td className="text-right">{fU(p.cost)}</td>
+                                <td className="text-right">{fI(p.impressions)}</td>
+                                <td className="text-right">{fI(p.clicks)}</td>
+                                <td className="text-right">{fI(p.conversions)}</td>
+                                <td className="text-right">{fP(p.conv_rate ?? (p.clicks ? (p.conversions / p.clicks) * 100 : 0))}</td>
+                                <td className="text-right">{fU(p.cpa)}</td>
+                              </tr>
+                            ))}
+                        </React.Fragment>
                       ))}
                     </tbody>
                   </table>

@@ -24,11 +24,15 @@ const SMTP_USER = "adops@chipperdigital.io";
 /** 16-character app password; spaces are removed automatically. */
 const SMTP_PASS = "lgrt vudh gcyj tzfu";
 /** Primary recipient(s) for the daily digest (comma-separated). */
-const DAILY_SPEND_EMAIL_TO = "koushik@brandmirchi.com";
+const DAILY_SPEND_EMAIL_TO = "kiran@brandmirchi.com,darshna@chipperdigital.io";
+/** CC recipient(s) for all daily emails (comma-separated). */
+const DAILY_SPEND_EMAIL_CC = "koushik@brandmirchi.com";
 const SMTP_HOST = "smtp.gmail.com";
 const SMTP_PORT = 587;
 /** Implicit TLS; set true when using SMTP_PORT 465. */
 const SMTP_SECURE = false;
+/** Recipient for missing data alerts (comma-separated). */
+const DAILY_SPEND_ALERT_EMAIL_TO = "kiran@brandmirchi.com,darshna@chipperdigital.io";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -51,6 +55,21 @@ type SpendJson = {
   microsoft_ads: number;
   tiktok_ads: number;
 };
+
+type PlatformCheck = {
+  id: string;
+  label: string;
+  table: string;
+  dateColumn: string;
+};
+
+const PLATFORM_CHECKS: PlatformCheck[] = [
+  { id: "google", label: "Google Ads", table: "google_campaigns_data", dateColumn: "segment_date" },
+  { id: "meta", label: "Meta Ads", table: "facebook_campaigns_data", dateColumn: "day" },
+  { id: "microsoft", label: "Bing / Microsoft Ads", table: "microsoft_campaigns_ad_group", dateColumn: "campaign_date" },
+  { id: "tiktok", label: "TikTok Ads", table: "tiktok_campaigns_data", dateColumn: "date" },
+  { id: "reddit", label: "Reddit Ads", table: "reddit_campaigns_ad_group", dateColumn: "campaign_date" },
+];
 
 function jsonRes(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -100,6 +119,7 @@ function resolvedSmtpAuth(): { user: string; pass: string } {
 async function sendViaSmtp(params: {
   from: string;
   to: string[];
+  cc?: string[];
   subject: string;
   html: string;
 }): Promise<{ messageId?: string }> {
@@ -120,11 +140,67 @@ async function sendViaSmtp(params: {
   const info = await transporter.sendMail({
     from: params.from,
     to: params.to.join(", "),
+    cc: params.cc?.join(", "),
     subject: params.subject,
     html: params.html,
   });
 
   return { messageId: info.messageId };
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function renderMissingDataAlertHtml(params: {
+  reportDate: string;
+  missingPlatforms: string[];
+  platformRowCounts: { id: string; label: string; rowCount: number }[];
+}): string {
+  const missingItems = params.missingPlatforms
+    .map((label) => `<li style="margin:6px 0;">${escapeHtml(label)}</li>`)
+    .join("");
+  const countsRows = params.platformRowCounts
+    .map((row) => `
+      <tr>
+        <td style="padding:8px 10px;border:1px solid #d9e2ec;">${escapeHtml(row.label)}</td>
+        <td style="padding:8px 10px;border:1px solid #d9e2ec;text-align:right;font-weight:600;">${row.rowCount}</td>
+      </tr>`)
+    .join("");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<body style="margin:0;padding:20px;background:#f5f7fa;font-family:Segoe UI,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:auto;background:#ffffff;border:1px solid #d9e2ec;border-radius:8px;">
+    <tr>
+      <td style="padding:18px 20px;background:#c92a2a;color:#ffffff;font-size:18px;font-weight:700;">
+        Alert: Missing platform data
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:16px 20px;color:#102a43;font-size:14px;line-height:1.6;">
+        <p style="margin:0 0 12px;">No data rows were found for one or more platforms for <strong>${escapeHtml(params.reportDate)}</strong>.</p>
+        <p style="margin:0 0 8px;font-weight:600;">Missing platforms:</p>
+        <ul style="margin:0 0 16px 20px;padding:0;color:#c92a2a;">${missingItems}</ul>
+        <p style="margin:0 0 8px;font-weight:600;">Row counts by platform:</p>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr>
+              <th align="left" style="padding:8px 10px;border:1px solid #d9e2ec;background:#f0f4f8;">Platform</th>
+              <th align="right" style="padding:8px 10px;border:1px solid #d9e2ec;background:#f0f4f8;">Rows</th>
+            </tr>
+          </thead>
+          <tbody>${countsRows}</tbody>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
 }
 
 Deno.serve(async (req: Request) => {
@@ -186,7 +262,22 @@ Deno.serve(async (req: Request) => {
     }));
     const total = rows.reduce((s, r) => s + r.spend, 0);
 
-    const toRaw = Deno.env.get("DAILY_SPEND_EMAIL_TO")?.trim() || DAILY_SPEND_EMAIL_TO.trim();
+    const rowCountChecks = await Promise.all(
+      PLATFORM_CHECKS.map(async (platform) => {
+        const { count, error } = await supabase
+          .from(platform.table)
+          .select("*", { head: true, count: "exact" })
+          .eq(platform.dateColumn, reportDate);
+        if (error) throw new Error(`Failed checking ${platform.label} row count: ${error.message}`);
+        return { id: platform.id, label: platform.label, rowCount: count ?? 0 };
+      }),
+    );
+    const missingPlatforms = rowCountChecks.filter((r) => r.rowCount === 0).map((r) => r.label);
+    const isMissingDataAlert = missingPlatforms.length > 0;
+
+    const toRaw = isMissingDataAlert
+      ? (Deno.env.get("DAILY_SPEND_ALERT_EMAIL_TO")?.trim() || DAILY_SPEND_ALERT_EMAIL_TO.trim())
+      : (Deno.env.get("DAILY_SPEND_EMAIL_TO")?.trim() || DAILY_SPEND_EMAIL_TO.trim());
     if (!toRaw) {
       console.log("[send-daily-ad-spend-email] EMAIL NOT SENT — no recipients configured");
       return jsonRes({
@@ -207,29 +298,42 @@ Deno.serve(async (req: Request) => {
         error: "DAILY_SPEND_EMAIL_TO has no valid addresses",
       }, 400);
     }
+    const ccRaw = Deno.env.get("DAILY_SPEND_EMAIL_CC")?.trim() || DAILY_SPEND_EMAIL_CC.trim();
+    const cc = ccRaw.split(",").map((s) => s.trim()).filter(Boolean);
 
     const { user: smtpMailbox } = resolvedSmtpAuth();
     const from = Deno.env.get("DAILY_SPEND_EMAIL_FROM")?.trim() ||
       (smtpMailbox ? `WowDashboard <${smtpMailbox}>` : "WowDashboard <noreply@localhost>");
 
-    const html = renderDailyAdSpendEmailHtml({
-      reportDate: spend.report_date,
-      rows,
-      total,
-    });
+    const html = isMissingDataAlert
+      ? renderMissingDataAlertHtml({
+        reportDate: spend.report_date,
+        missingPlatforms,
+        platformRowCounts: rowCountChecks,
+      })
+      : renderDailyAdSpendEmailHtml({
+        reportDate: spend.report_date,
+        rows,
+        total,
+      });
 
-    const subject = `Daily ad spend — ${spend.report_date} — ${new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      maximumFractionDigits: 0,
-    }).format(total)} total`;
+    const subject = isMissingDataAlert
+      ? `ALERT: Missing ad platform data — ${spend.report_date}`
+      : `Daily ad spend — ${spend.report_date} — ${new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        maximumFractionDigits: 0,
+      }).format(total)} total`;
 
     console.log("[send-daily-ad-spend-email] sending SMTP …", {
       report_date: spend.report_date,
       to,
+      cc,
       from,
+      email_type: isMissingDataAlert ? "missing_data_alert" : "daily_digest",
+      missing_platforms: missingPlatforms,
     });
-    const sent = await sendViaSmtp({ from, to, subject, html });
+    const sent = await sendViaSmtp({ from, to, cc, subject, html });
     console.log("[send-daily-ad-spend-email] EMAIL SENT OK", {
       smtp_message_id: sent.messageId ?? null,
       to,
@@ -241,6 +345,10 @@ Deno.serve(async (req: Request) => {
       report_date: spend.report_date,
       smtp_message_id: sent.messageId ?? null,
       recipients: to,
+      cc,
+      email_type: isMissingDataAlert ? "missing_data_alert" : "daily_digest",
+      missing_platforms: missingPlatforms,
+      platform_row_counts: rowCountChecks,
       spend: { ...spend, total_all_platforms: total },
     });
   } catch (e) {
