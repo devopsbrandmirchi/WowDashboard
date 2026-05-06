@@ -4,6 +4,7 @@ import { DateRangePicker } from '../components/DatePicker';
 import Chart from 'chart.js/auto';
 import { exportReportPdf, getDateRangeLabel } from '../utils/exportReportPdf';
 import { useApp } from '../context/AppContext';
+import { supabase } from '../lib/supabase';
 
 const fU = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fI = (n) => Math.round(Number(n || 0)).toLocaleString('en-US');
@@ -11,6 +12,50 @@ const fP = (n) => Number(n || 0).toFixed(2) + '%';
 const fR = (n) => Number(n || 0).toFixed(2) + 'x';
 
 const PG = 50;
+
+function fmtLocalDate(d) {
+  if (!d) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function resolveDateRange(preset, customFrom, customTo) {
+  const today = new Date();
+  const daysAgo = (n) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - n);
+    return d;
+  };
+  switch (preset) {
+    case 'today':
+      return { from: fmtLocalDate(today), to: fmtLocalDate(today) };
+    case 'yesterday':
+      return { from: fmtLocalDate(daysAgo(1)), to: fmtLocalDate(daysAgo(1)) };
+    case 'last7':
+      return { from: fmtLocalDate(daysAgo(6)), to: fmtLocalDate(today) };
+    case 'last14':
+      return { from: fmtLocalDate(daysAgo(13)), to: fmtLocalDate(today) };
+    case 'last30':
+      return { from: fmtLocalDate(daysAgo(29)), to: fmtLocalDate(today) };
+    case 'this_month': {
+      const first = new Date(today.getFullYear(), today.getMonth(), 1);
+      return { from: fmtLocalDate(first), to: fmtLocalDate(today) };
+    }
+    case 'last_month': {
+      const first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const last = new Date(today.getFullYear(), today.getMonth(), 0);
+      return { from: fmtLocalDate(first), to: fmtLocalDate(last) };
+    }
+    case 'custom':
+      return { from: customFrom || null, to: customTo || null };
+    case '2025':
+      return { from: '2025-01-01', to: '2025-12-31' };
+    default:
+      return { from: null, to: null };
+  }
+}
 
 const TABS = [
   { id: 'campaigns', label: 'Campaigns', nameColLabel: 'Campaign Name', totalLabel: (n) => `All Campaigns (${n})` },
@@ -174,7 +219,10 @@ const METRIC_COLS = [
 
 export function TiktokReportPage() {
   const { branding, registerExportPdf } = useApp();
-  const { filters, batchUpdateFilters, fetchData, loading, error, campaigns, adSets, ads, placements, countries, products, shows, days, kpis, dailyTrends } = useTiktokReportData();
+  const { filters, batchUpdateFilters, fetchData, loading, error, campaigns, adSets, ads, placements, products, shows, days, kpis, dailyTrends } = useTiktokReportData();
+  const [dbCountries, setDbCountries] = useState([]);
+  const [dbCountriesLoading, setDbCountriesLoading] = useState(true);
+  const [dbCountriesError, setDbCountriesError] = useState(null);
 
   const [activeTab, setActiveTab] = useState('campaigns');
   const [sort, setSort] = useState(() => {
@@ -209,6 +257,84 @@ export function TiktokReportPage() {
   const exportPdfRef = useRef(null);
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchCountriesFromCampaignTable = async () => {
+      setDbCountriesLoading(true);
+      setDbCountriesError(null);
+      try {
+        const { from, to } = resolveDateRange(filters.datePreset, filters.dateFrom, filters.dateTo);
+        const pageSize = 1000;
+        let offset = 0;
+        const rows = [];
+        const { data: referenceRows, error: referenceError } = await supabase
+          .from('tiktok_campaigns_reference_data')
+          .select('campaign_name,country');
+        if (referenceError) throw referenceError;
+        const referenceCountryByCampaign = new Map();
+        (referenceRows || []).forEach((ref) => {
+          const campaignName = (ref.campaign_name || '').toString().trim();
+          if (!campaignName) return;
+          if (!referenceCountryByCampaign.has(campaignName)) {
+            referenceCountryByCampaign.set(campaignName, (ref.country || '').toString().trim());
+          }
+        });
+
+        while (true) {
+          let q = supabase
+            .from('tiktok_campaigns_data')
+            .select('campaign_name,country,cost,impressions,clicks,conversions,total_purchase,date')
+            .range(offset, offset + pageSize - 1);
+          if ((filters.campaignSearch || '').trim()) q = q.ilike('campaign_name', `%${filters.campaignSearch.trim()}%`);
+          if ((filters.adGroupSearch || '').trim()) q = q.ilike('ad_group_name', `%${filters.adGroupSearch.trim()}%`);
+          if (from) q = q.gte('date', from);
+          if (to) q = q.lte('date', to);
+
+          const { data, error: queryError } = await q;
+          if (queryError) throw queryError;
+          if (!data || data.length === 0) break;
+          rows.push(...data);
+          if (data.length < pageSize) break;
+          offset += pageSize;
+        }
+
+        const map = new Map();
+        rows.forEach((r) => {
+          const campaignName = (r.campaign_name || '').toString().trim();
+          const fallbackCountry = campaignName ? (referenceCountryByCampaign.get(campaignName) || '') : '';
+          const country = (r.country || '').toString().trim() || fallbackCountry || 'Undefined';
+          if (!map.has(country)) {
+            map.set(country, { key: country, name: country, cost: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0 });
+          }
+          const item = map.get(country);
+          item.cost += toNum(r.cost);
+          item.impressions += toNum(r.impressions);
+          item.clicks += toNum(r.clicks);
+          item.purchases += toNum(r.conversions ?? r.total_purchase);
+        });
+
+        const nextCountries = Array.from(map.values()).sort((a, b) => (b.cost || 0) - (a.cost || 0));
+        if (!cancelled) setDbCountries(nextCountries);
+      } catch (err) {
+        if (!cancelled) {
+          setDbCountries([]);
+          setDbCountriesError(err?.message || 'Failed to fetch TikTok countries');
+        }
+      } finally {
+        if (!cancelled) setDbCountriesLoading(false);
+      }
+    };
+
+    fetchCountriesFromCampaignTable();
+    return () => {
+      cancelled = true;
+    };
+  }, [filters.datePreset, filters.dateFrom, filters.dateTo, filters.campaignSearch, filters.adGroupSearch]);
+
+  const countries = dbCountries;
+  const combinedLoading = loading || dbCountriesLoading;
+  const combinedError = error || dbCountriesError;
 
   const tabDataMap = {
     campaigns,
@@ -494,9 +620,9 @@ export function TiktokReportPage() {
           </div>
         </div>
 
-        {error && (
+        {combinedError && (
           <div style={{ padding: '16px 20px', background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 'var(--radius-md)', margin: '0 0 16px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ flex: 1 }}>{error}</span>
+            <span style={{ flex: 1 }}>{combinedError}</span>
             <button type="button" className="btn btn-primary btn-sm" onClick={handleRetry}>Retry</button>
           </div>
         )}
@@ -600,7 +726,7 @@ export function TiktokReportPage() {
                   className={`gads-tab ${activeTab === tab.id ? 'active' : ''}`}
                   onClick={() => setActiveTab(tab.id)}
                 >
-                  {tab.label}{countMap[tab.id] != null && !loading ? ` (${countMap[tab.id]})` : ''}
+                  {tab.label}{countMap[tab.id] != null && !combinedLoading ? ` (${countMap[tab.id]})` : ''}
                 </button>
               ))}
             </div>
@@ -632,9 +758,9 @@ export function TiktokReportPage() {
         </div>
 
         <div id="tiktok-tab-content">
-          {loading && <div className="gads-loading"><div className="gads-spinner" /> Loading data...</div>}
+          {combinedLoading && <div className="gads-loading"><div className="gads-spinner" /> Loading data...</div>}
 
-          {!loading && (
+          {!combinedLoading && (
             <>
               <div className="panel">
                 <div className="panel-body no-padding">
