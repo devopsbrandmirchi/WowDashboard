@@ -17,6 +17,7 @@ function permissionKeyToLabel(key) {
     'subscriptions-analytics': 'Subscription analytics',
     'subscriptions-subscribers': 'Subscriber intelligence',
     'subscriptions-dating-apps': 'Dating app subscription data',
+    'subscriptions-hubspot-email': 'HubSpot email marketing',
     'microsoft-campaigns-reference': 'Microsoft campaigns reference',
     'admin:manage_roles': 'Manage roles',
     'admin:manage_users': 'Manage users',

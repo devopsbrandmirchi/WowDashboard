@@ -48,7 +48,7 @@ SELECT r.id, 'sidebar:' || p
 FROM public.roles r
 CROSS JOIN unnest(ARRAY[
   'dashboard','combined-reporting','google-ads','meta-ads','bing-ads','tiktok-ads',
-  'reddit-ads','subscriptions-analytics','subscriptions-subscribers','subscriptions-dating-apps',
+  'reddit-ads','subscriptions-analytics','subscriptions-subscribers','subscriptions-dating-apps','subscriptions-hubspot-email',
   'settings','roles-permissions','users'
 ]) AS p
 WHERE r.name IN ('super_admin', 'admin')

@@ -70,6 +70,7 @@ export const ALL_PERMISSION_KEYS = {
     'sidebar:subscriptions-analytics',
     'sidebar:subscriptions-subscribers',
     'sidebar:subscriptions-dating-apps',
+    'sidebar:subscriptions-hubspot-email',
     'sidebar:settings',
     'sidebar:roles-permissions',
     'sidebar:users',

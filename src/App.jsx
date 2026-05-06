@@ -28,6 +28,7 @@ import { ProfilePage } from './pages/ProfilePage';
 import { VimeoAnalyticsPage } from './pages/VimeoAnalyticsPage';
 import { SubscriberIntelligencePage } from './pages/SubscriberIntelligencePage';
 import { DatingAppSubscriptionDataPage } from './pages/DatingAppSubscriptionDataPage';
+import { HubspotEmailMarketingPage } from './pages/subscriptions/HubspotEmailMarketingPage';
 import { invokeEdgeFunction } from './lib/supabase.js';
 import { getFacebookOAuthRedirectUri } from './lib/facebookOAuth.js';
 
@@ -36,6 +37,7 @@ const PATH_TO_PAGE = {
   '/subscriptions/analytics': 'subscriptions-analytics',
   '/subscriptions/subscribers': 'subscriptions-subscribers',
   '/subscriptions/dating-apps': 'subscriptions-dating-apps',
+  '/subscriptions/hubspot-email': 'subscriptions-hubspot-email',
   '/combined-reporting': 'combined-reporting',
   '/google-ads': 'google-ads',
   '/meta-ads': 'meta-ads',
@@ -75,6 +77,7 @@ const PAGE_TITLES = {
   'subscriptions-analytics': 'Subscription Analytics',
   'subscriptions-subscribers': 'Subscriber Intelligence',
   'subscriptions-dating-apps': 'Dating app subscription data',
+  'subscriptions-hubspot-email': 'HubSpot email marketing',
 };
 
 function CurrentPage({ forcePage }) {
@@ -114,6 +117,7 @@ function CurrentPage({ forcePage }) {
   if (page === 'subscriptions-analytics') return <VimeoAnalyticsPage />;
   if (page === 'subscriptions-subscribers') return <SubscriberIntelligencePage />;
   if (page === 'subscriptions-dating-apps') return <DatingAppSubscriptionDataPage />;
+  if (page === 'subscriptions-hubspot-email') return <HubspotEmailMarketingPage />;
 
   return <DashboardPage />;
 }
@@ -257,6 +261,7 @@ export default function App() {
       <Routes>
         <Route path="/subscriptions/analytics" element={<AppContent forcePage="subscriptions-analytics" />} />
         <Route path="/subscriptions/dating-apps" element={<AppContent forcePage="subscriptions-dating-apps" />} />
+        <Route path="/subscriptions/hubspot-email" element={<AppContent forcePage="subscriptions-hubspot-email" />} />
         <Route path="/settings/roles-permissions" element={<AppContent forcePage="roles-permissions" />} />
         <Route path="/settings/users" element={<AppContent forcePage="users" />} />
         <Route path="/settings/google-campaigns-reference" element={<AppContent forcePage="google-campaigns-reference" />} />

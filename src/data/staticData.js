@@ -100,6 +100,7 @@ export const PAGE_TITLES = {
   'subscriptions-analytics': 'Subscription Analytics',
   'subscriptions-subscribers': 'Subscriber Intelligence',
   'subscriptions-dating-apps': 'Dating app subscription data',
+  'subscriptions-hubspot-email': 'HubSpot email marketing',
   'google-ads': 'Google Ads Performance',
   'meta-ads': 'Meta Ads Performance',
   'bing-ads': 'Bing / Microsoft Ads',
