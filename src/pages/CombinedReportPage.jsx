@@ -5,6 +5,7 @@ import { useMetaCampaignsData } from '../hooks/useMetaCampaignsData';
 import { useRedditReportData } from '../hooks/useRedditReportData';
 import { useMicrosoftAdsReportData } from '../hooks/useMicrosoftAdsReportData';
 import { useTiktokReportData } from '../hooks/useTiktokReportData';
+import { useDatingAppCombinedData } from '../hooks/useDatingAppCombinedData';
 import { DateRangePicker } from '../components/DatePicker';
 import { exportReportPdf, getDateRangeLabel } from '../utils/exportReportPdf';
 import { calculateRoas, calculateWeightedRoas } from '../utils/roas';
@@ -101,9 +102,10 @@ function useCombinedSummary() {
   const reddit = useRedditReportData();
   const microsoft = useMicrosoftAdsReportData();
   const tiktok = useTiktokReportData();
+  const datingApps = useDatingAppCombinedData();
 
-  const loading = google.loading || meta.loading || reddit.loading || microsoft.loading || tiktok.loading;
-  const errors = [google.error, meta.error, reddit.error, microsoft.error, tiktok.error].filter(Boolean);
+  const loading = google.loading || meta.loading || reddit.loading || microsoft.loading || tiktok.loading || datingApps.loading;
+  const errors = [google.error, meta.error, reddit.error, microsoft.error, tiktok.error, datingApps.error].filter(Boolean);
 
   const getConv = (k) => (k && (Number(k.conversions ?? k.purchases ?? 0)));
   const getCost = (k) => (k && Number(k.cost ?? 0));
@@ -179,6 +181,18 @@ function useCombinedSummary() {
       cpa: getCpa(tiktok.kpis),
       roas: getRoas(tiktok.kpis),
     },
+    {
+      id: 'dating-apps',
+      label: 'Display Ads',
+      color: '#c026d3',
+      cost: getCost(datingApps.kpis),
+      impressions: getImpr(datingApps.kpis),
+      clicks: getClicks(datingApps.kpis),
+      conversions: getConv(datingApps.kpis),
+      conv_rate: getConvRate(datingApps.kpis),
+      cpa: getCpa(datingApps.kpis),
+      roas: getRoas(datingApps.kpis),
+    },
   ];
 
   const totalCost = rows.reduce((s, r) => s + (r.cost || 0), 0);
@@ -243,7 +257,8 @@ function useCombinedSummary() {
       reddit.fetchData();
       microsoft.fetchData();
       tiktok.fetchData();
-    }, [google.fetchData, meta.fetchData, reddit.fetchData, microsoft.fetchData, tiktok.fetchData]),
+      datingApps.fetchData();
+    }, [google.fetchData, meta.fetchData, reddit.fetchData, microsoft.fetchData, tiktok.fetchData, datingApps.fetchData]),
     batchUpdateDate: useCallback(
       ({ preset, dateFrom, dateTo }) => {
         const updates = { datePreset: preset, dateFrom: dateFrom || '', dateTo: dateTo || '' };

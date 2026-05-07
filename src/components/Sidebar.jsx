@@ -39,7 +39,7 @@ const NAV_ITEMS = [
   },
   { id: 'subscriptions-analytics', label: 'Subscription Analytics', icon: '📈', section: 'Subscriptions' },
   { id: 'subscriptions-subscribers', label: 'Subscriber Intelligence', icon: '👥', section: 'Subscriptions' },
-  { id: 'subscriptions-dating-apps', label: 'Dating app data', icon: '💜', section: 'Subscriptions' },
+  { id: 'subscriptions-dating-apps', label: 'Display Ads', icon: '💜', section: 'Ad Platforms' },
   { id: 'subscriptions-hubspot-email', label: 'HubSpot email marketing', icon: '✉️', section: 'Subscriptions' },
   { id: 'settings',  label: 'White-Label Settings',  icon: '⚙️', section: 'System' },
   { id: 'roles-permissions', label: 'Roles & Permissions', icon: '🔐', section: 'System' },
