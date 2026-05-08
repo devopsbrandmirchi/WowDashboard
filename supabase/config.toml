@@ -8,13 +8,25 @@ verify_jwt = false
 [functions.fetch-reddit-campaigns-upsert]
 verify_jwt = false
 
+[functions.fetch-reddit-campaigns-upsert-country]
+verify_jwt = false
+
 [functions.fetch-facebook-campaigns-upsert]
+verify_jwt = false
+
+[functions.fetch-facebook-campaigns-upsert-country]
 verify_jwt = false
 
 [functions.fetch-tiktok-campaigns-upsert]
 verify_jwt = false
 
+[functions.fetch-tiktok-campaigns-upsert-country]
+verify_jwt = false
+
 [functions.sync-microsoft-ads]
+verify_jwt = false
+
+[functions.sync-microsoft-ads-country]
 verify_jwt = false
 
 [functions.send-daily-ad-spend-email]
