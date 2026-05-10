@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase.js';
 import { formatNumber, formatDec } from '../../utils/format.js';
 import { DateRangePicker } from '../../components/DatePicker';
 
-const TABLE_NAME = import.meta.env.VITE_SUPABASE_HUBSPOT_EMAIL_TABLE || 'hubspot_marketing_emails';
+const TABLE_NAME = import.meta.env.VITE_SUPABASE_HUBSPOT_EMAIL_TABLE || 'hubspot_campaign_emails';
 const STATUS_ALL = 'all';
 const PAGE_SIZE = 20;
 
@@ -37,7 +37,8 @@ function pct(v, d = 1) {
 function fmtDate(v) {
   if (!v) return '—';
   try {
-    return new Date(v).toLocaleDateString();
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
   } catch {
     return '—';
   }
@@ -56,53 +57,16 @@ function average(list, key) {
   return vals.reduce((a, b) => a + b, 0) / vals.length;
 }
 
-function toBooleanLike(value) {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value === 1;
-  const s = String(value || '').trim().toLowerCase();
-  if (!s) return null;
-  if (['true', 't', 'yes', 'y', '1', 'automated', 'auto', 'workflow'].includes(s)) return true;
-  if (['false', 'f', 'no', 'n', '0', 'regular', 'manual', 'broadcast'].includes(s)) return false;
-  return null;
-}
-
 function normalizeRow(row) {
-  const campaignName = row.campaign_name || row.campaign || row.workflow_name || 'Unknown campaign';
-  const autoCandidateFields = [
-    row.is_automated,
-    row.automated,
-    row.is_workflow,
-    row.workflow_enabled,
-    row.automation_enabled,
-    row.email_is_automated,
-  ];
-  let isAutomated = null;
-  for (const v of autoCandidateFields) {
-    const b = toBooleanLike(v);
-    if (b !== null) {
-      isAutomated = b;
-      break;
-    }
-  }
+  const campaignName = row.campaign_name || row.campaign || row.workflow_name || 'Unknown Campaign';
 
-  const typeRaw = String(
-    row.campaign_type ||
-    row.email_type ||
-    row.type ||
-    row.category ||
-    row.campaign_category ||
-    row.email_category ||
-    row.message_type ||
-    '',
-  ).toLowerCase();
-  if (isAutomated === null) {
-    isAutomated = (
-      typeRaw.includes('automated') ||
-      typeRaw.includes('workflow') ||
-      typeRaw.includes('drip') ||
-      typeRaw.includes('sequence')
-    );
-  }
+  // Trust the backend's boolean first, fallback to string matching
+  const emailTypeStr = String(row.email_type || row.type || '').toUpperCase();
+  const isAutomated = 
+    row.is_automated === true || 
+    String(row.is_automated).toLowerCase() === 'true' || 
+    emailTypeStr.includes('AUTOMATED');
+
   const status = row.status || row.campaign_status || 'ACTIVE';
   const publishSendAt = row.publish_send_at || row.sent_at || row.send_at || null;
 
@@ -110,7 +74,7 @@ function normalizeRow(row) {
     email_id: row.email_id || row.id || `${campaignName}-${row.email_name || row.subject || Math.random()}`,
     campaign_id: row.campaign_id || null,
     campaign_name: campaignName,
-    is_automated: isAutomated,
+    is_automated: isAutomated, 
     status,
     email_name: row.email_name || row.subject_line || row.subject || '—',
     publish_send_at: publishSendAt,
@@ -131,7 +95,7 @@ export function HubspotEmailMarketingPage() {
   const [error, setError] = useState(null);
   const [tab, setTab] = useState('regular');
   const [filters, setFilters] = useState({
-    datePreset: 'last30',
+    datePreset: '', // Set to empty string to prevent forced default filtering
     dateFrom: '',
     dateTo: '',
     compareOn: false,
@@ -169,10 +133,17 @@ export function HubspotEmailMarketingPage() {
 
   const filtered = useMemo(() => {
     return rows.filter((r) => {
-      const d = r.publish_send_at ? String(r.publish_send_at).slice(0, 10) : null;
-      if (filters.dateFrom && d && d < filters.dateFrom) return false;
-      if (filters.dateTo && d && d > filters.dateTo) return false;
+      // 1. Status Filter applies to everything
       if (status !== STATUS_ALL && String(r.status).toUpperCase() !== status) return false;
+
+      // 2. Date Filter applies ONLY to Regular Campaigns.
+      // Automated campaigns are continuous, so filtering by "publish date" incorrectly hides them.
+      if (!r.is_automated) {
+        const d = r.publish_send_at ? String(r.publish_send_at).slice(0, 10) : null;
+        if (filters.dateFrom && d && d < filters.dateFrom) return false;
+        if (filters.dateTo && d && d > filters.dateTo) return false;
+      }
+
       return true;
     });
   }, [rows, filters.dateFrom, filters.dateTo, status]);
@@ -181,8 +152,16 @@ export function HubspotEmailMarketingPage() {
     setFilters((prev) => ({ ...prev, ...next }));
   }, []);
 
-  const regularRows = useMemo(() => filtered.filter((r) => !r.is_automated), [filtered]);
-  const automatedRows = useMemo(() => filtered.filter((r) => r.is_automated), [filtered]);
+  const sortedFiltered = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      const dateA = a.publish_send_at || '1970-01-01';
+      const dateB = b.publish_send_at || '1970-01-01';
+      return dateB.localeCompare(dateA);
+    });
+  }, [filtered]);
+
+  const regularRows = useMemo(() => sortedFiltered.filter((r) => !r.is_automated), [sortedFiltered]);
+  const automatedRows = useMemo(() => sortedFiltered.filter((r) => r.is_automated), [sortedFiltered]);
 
   useEffect(() => {
     setPageRegular(1);
@@ -224,11 +203,6 @@ export function HubspotEmailMarketingPage() {
     return { reg: avgByCampaign(regularRows), auto: avgByCampaign(automatedRows) };
   }, [regularRows, automatedRows]);
 
-  const sortedBySendDate = useCallback(
-    (data) => [...data].sort((a, b) => String(b.publish_send_at || '').localeCompare(String(a.publish_send_at || ''))),
-    [],
-  );
-
   useEffect(() => {
     const destroy = (k) => {
       if (chartRefs.current[k]) {
@@ -236,19 +210,24 @@ export function HubspotEmailMarketingPage() {
         chartRefs.current[k] = null;
       }
     };
-    const labels = (data) => data.map((r) => String(r.email_name || '').slice(0, 20));
+    
+    // Cap charts at 50 to prevent UI lag/squishing, keeping tables intact
+    const getChartData = (data) => data.slice(0, 50);
+    const labels = (data) => data.map((r) => String(r.email_name || r.campaign_name || '').slice(0, 20));
 
     if (tab === 'regular') {
       destroy('autoDel'); destroy('autoRates'); destroy('compare');
       const delCanvas = document.getElementById('hs-reg-del');
       const ratesCanvas = document.getElementById('hs-reg-rates');
+      const chartData = getChartData(regularRows);
+
       if (delCanvas) {
         destroy('regDel');
         chartRefs.current.regDel = new Chart(delCanvas, {
           type: 'bar',
           data: {
-            labels: labels(regularRows),
-            datasets: [{ label: 'Delivered', data: regularRows.map((r) => toNum(r.delivered)), backgroundColor: '#378ADD', borderRadius: 3 }],
+            labels: labels(chartData),
+            datasets: [{ label: 'Delivered', data: chartData.map((r) => toNum(r.delivered)), backgroundColor: '#378ADD', borderRadius: 3 }],
           },
           options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } },
         });
@@ -258,10 +237,10 @@ export function HubspotEmailMarketingPage() {
         chartRefs.current.regRates = new Chart(ratesCanvas, {
           type: 'line',
           data: {
-            labels: labels(regularRows),
+            labels: labels(chartData),
             datasets: [
-              { label: 'Open %', data: regularRows.map((r) => r.open_rate_pct), borderColor: '#1D9E75', tension: 0.3 },
-              { label: 'Click %', data: regularRows.map((r) => r.click_rate_pct), borderColor: '#BA7517', tension: 0.3, borderDash: [4, 3] },
+              { label: 'Open %', data: chartData.map((r) => r.open_rate_pct), borderColor: '#1D9E75', tension: 0.3 },
+              { label: 'Click %', data: chartData.map((r) => r.click_rate_pct), borderColor: '#BA7517', tension: 0.3, borderDash: [4, 3] },
             ],
           },
           options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } },
@@ -271,13 +250,15 @@ export function HubspotEmailMarketingPage() {
       destroy('regDel'); destroy('regRates'); destroy('compare');
       const delCanvas = document.getElementById('hs-auto-del');
       const ratesCanvas = document.getElementById('hs-auto-rates');
+      const chartData = getChartData(automatedRows);
+
       if (delCanvas) {
         destroy('autoDel');
         chartRefs.current.autoDel = new Chart(delCanvas, {
           type: 'bar',
           data: {
-            labels: labels(automatedRows),
-            datasets: [{ label: 'Delivered', data: automatedRows.map((r) => toNum(r.delivered)), backgroundColor: '#7F77DD', borderRadius: 3 }],
+            labels: labels(chartData),
+            datasets: [{ label: 'Delivered', data: chartData.map((r) => toNum(r.delivered)), backgroundColor: '#7F77DD', borderRadius: 3 }],
           },
           options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } },
         });
@@ -287,10 +268,10 @@ export function HubspotEmailMarketingPage() {
         chartRefs.current.autoRates = new Chart(ratesCanvas, {
           type: 'line',
           data: {
-            labels: labels(automatedRows),
+            labels: labels(chartData),
             datasets: [
-              { label: 'Open %', data: automatedRows.map((r) => r.open_rate_pct), borderColor: '#1D9E75', tension: 0.3 },
-              { label: 'Click %', data: automatedRows.map((r) => r.click_rate_pct), borderColor: '#BA7517', tension: 0.3, borderDash: [4, 3] },
+              { label: 'Open %', data: chartData.map((r) => r.open_rate_pct), borderColor: '#1D9E75', tension: 0.3 },
+              { label: 'Click %', data: chartData.map((r) => r.click_rate_pct), borderColor: '#BA7517', tension: 0.3, borderDash: [4, 3] },
             ],
           },
           options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } },
@@ -301,9 +282,13 @@ export function HubspotEmailMarketingPage() {
       const cmpCanvas = document.getElementById('hs-compare-open');
       if (cmpCanvas) {
         destroy('compare');
-        const allNames = Array.from(new Set([...compareByCampaign.reg.map((x) => x.name), ...compareByCampaign.auto.map((x) => x.name)]));
-        const regMap = Object.fromEntries(compareByCampaign.reg.map((x) => [x.name, x.avg]));
-        const autoMap = Object.fromEntries(compareByCampaign.auto.map((x) => [x.name, x.avg]));
+        const topReg = compareByCampaign.reg.slice(0, 20);
+        const topAuto = compareByCampaign.auto.slice(0, 20);
+        const allNames = Array.from(new Set([...topReg.map((x) => x.name), ...topAuto.map((x) => x.name)]));
+        
+        const regMap = Object.fromEntries(topReg.map((x) => [x.name, x.avg]));
+        const autoMap = Object.fromEntries(topAuto.map((x) => [x.name, x.avg]));
+        
         chartRefs.current.compare = new Chart(cmpCanvas, {
           type: 'bar',
           data: {
@@ -373,12 +358,14 @@ export function HubspotEmailMarketingPage() {
   );
 
   const DataTable = ({ data, page, onPage }) => {
-    const sorted = sortedBySendDate(data);
+    const sorted = data; 
     const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
     const safePage = Math.min(page, pages);
     const start = (safePage - 1) * PAGE_SIZE;
     const pageRows = sorted.slice(start, start + PAGE_SIZE);
+    
     if (!sorted.length) return <p className="hs-cmp-empty">No data for selected filters</p>;
+    
     return (
       <>
         <div className="hs-cmp-table-wrap">
@@ -458,7 +445,7 @@ export function HubspotEmailMarketingPage() {
                 className="btn btn-outline btn-sm"
                 onClick={() => {
                   setFilters({
-                    datePreset: 'last30',
+                    datePreset: '',
                     dateFrom: '',
                     dateTo: '',
                     compareOn: false,

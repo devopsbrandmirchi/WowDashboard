@@ -1,11 +1,97 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase.js';
-import { parseDatingAppSubscriptionXlsx, extractReportYearMonth } from '../lib/parseDatingAppSubscriptionXlsx.js';
+import appBySampleCsvUrl from '../../samples/app_by_sample.csv?url';
+import countryBySampleCsvUrl from '../../samples/country_by_sample.csv?url';
 
 const fU = (n) =>
   '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fI = (n) => Math.round(Number(n || 0)).toLocaleString('en-US');
+
+function parseCsvLine(line) {
+  const out = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === ',' && !inQuotes) {
+      out.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  out.push(current.trim());
+  return out;
+}
+
+function normalizeHeader(h) {
+  return String(h || '').toLowerCase().replace(/[\s_/-]+/g, '');
+}
+
+function parseNumberValue(v) {
+  const cleaned = String(v ?? '')
+    .replace(/\$/g, '')
+    .replace(/,/g, '')
+    .trim();
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseIntegerValue(v) {
+  const n = parseNumberValue(v);
+  return Number.isFinite(n) ? Math.round(n) : 0;
+}
+
+function parseMetricsCsv(text) {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = parseCsvLine(lines[0]).map(normalizeHeader);
+  const nameHeaderCandidates = ['rowlabel', 'apps', 'app', 'country', 'countryregion', 'region', 'name'];
+  const rowLabelIdx = nameHeaderCandidates
+    .map((k) => headers.indexOf(k))
+    .find((i) => i != null && i >= 0);
+  const idx = {
+    row_label: rowLabelIdx ?? -1,
+    spend: headers.indexOf('spend'),
+    impressions: headers.indexOf('impressions'),
+    clicks: headers.indexOf('clicks'),
+    cpm: headers.indexOf('cpm'),
+    cpc: headers.indexOf('cpc'),
+  };
+  if (idx.row_label < 0 || idx.spend < 0 || idx.impressions < 0 || idx.clicks < 0 || idx.cpm < 0 || idx.cpc < 0) {
+    throw new Error('CSV must include a name column (Apps/Country/row_label) plus: Spend, Impressions, Clicks, CPM, CPC');
+  }
+  return lines
+    .slice(1)
+    .map((line) => {
+      const cols = parseCsvLine(line);
+      const rowLabel = String(cols[idx.row_label] || '').trim();
+      if (!rowLabel) return null;
+      return {
+        row_label: rowLabel,
+        is_total: rowLabel.toUpperCase() === 'TOTAL',
+        spend: parseNumberValue(cols[idx.spend]),
+        impressions: parseIntegerValue(cols[idx.impressions]),
+        clicks: parseIntegerValue(cols[idx.clicks]),
+        cpm: parseNumberValue(cols[idx.cpm]),
+        cpc: parseNumberValue(cols[idx.cpc]),
+      };
+    })
+    .filter(Boolean);
+}
 
 /**
  * Excel import for dating app subscription campaign data (WOW-style sheets).
@@ -14,6 +100,22 @@ const fI = (n) => Math.round(Number(n || 0)).toLocaleString('en-US');
 export function DatingAppSubscriptionImportPanel({ showNotification }) {
   const { user } = useAuth();
   const fileInputRef = useRef(null);
+  const now = new Date();
+  const monthOptions = [
+    { value: 1, label: 'January' },
+    { value: 2, label: 'February' },
+    { value: 3, label: 'March' },
+    { value: 4, label: 'April' },
+    { value: 5, label: 'May' },
+    { value: 6, label: 'June' },
+    { value: 7, label: 'July' },
+    { value: 8, label: 'August' },
+    { value: 9, label: 'September' },
+    { value: 10, label: 'October' },
+    { value: 11, label: 'November' },
+    { value: 12, label: 'December' },
+  ];
+  const yearOptions = Array.from({ length: 6 }, (_, i) => now.getFullYear() - 3 + i);
 
   const [uploads, setUploads] = useState([]);
   const [uploadsLoading, setUploadsLoading] = useState(true);
@@ -21,6 +123,30 @@ export function DatingAppSubscriptionImportPanel({ showNotification }) {
   const [preview, setPreview] = useState(null);
   const [saving, setSaving] = useState(false);
   const [fileParsing, setFileParsing] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState('');
+  const [selectedYear, setSelectedYear] = useState('');
+  const [selectedExcelMode, setSelectedExcelMode] = useState('');
+  const [hasDownloadedSample, setHasDownloadedSample] = useState(false);
+
+  const downloadSampleCsv = useCallback((mode) => {
+    const isApp = mode === 'app';
+    const href = isApp ? appBySampleCsvUrl : countryBySampleCsvUrl;
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = isApp ? 'app_by_sample.csv' : 'country_by_sample.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setSelectedExcelMode(mode);
+    setHasDownloadedSample(true);
+    showNotification?.(`Downloaded ${isApp ? 'By App' : 'By Country'} sample CSV. You can upload now.`);
+  }, [showNotification]);
+
+  useEffect(() => {
+    setSelectedExcelMode('');
+    setHasDownloadedSample(false);
+    setPreview(null);
+  }, [selectedMonth, selectedYear]);
 
   const loadUploads = useCallback(async () => {
     setUploadsLoading(true);
@@ -52,21 +178,28 @@ export function DatingAppSubscriptionImportPanel({ showNotification }) {
     setPreview(null);
     setFileParsing(true);
     try {
-      const buf = await file.arrayBuffer();
-      const parsed = parseDatingAppSubscriptionXlsx(buf);
+      if (!String(file.name || '').toLowerCase().endsWith('.csv')) {
+        throw new Error('Please upload CSV only.');
+      }
+      if (!selectedExcelMode) {
+        throw new Error('Please download and choose CSV mode first.');
+      }
+      const text = await file.text();
+      const parsedRows = parseMetricsCsv(text);
+      const byApp = selectedExcelMode === 'app' ? parsedRows : [];
+      const byCountry = selectedExcelMode === 'country' ? parsedRows : [];
       setPreview({
-        sheets: parsed.sheets || [],
-        workbookWarnings: parsed.warnings || [],
+        sheets: [{ sheetName: 'CSV Upload', byApp, byCountry, warnings: [] }],
+        workbookWarnings: [],
         sourceFilename: file.name,
       });
-      const n = parsed.sheets?.length ?? 0;
+      const n = parsedRows.length;
       const parts = [];
-      if (n > 0) parts.push(`${n} sheet(s) ready to save`);
-      if (parsed.warnings?.length) parts.push(parsed.warnings.join(' '));
+      if (n > 0) parts.push(`${n} row(s) ready to save`);
       if (parts.length) showNotification?.(parts.join(' · '));
     } catch (err) {
       console.error(err);
-      showNotification?.(err.message || 'Could not read Excel file');
+      showNotification?.(err.message || 'Could not read CSV file');
     } finally {
       setFileParsing(false);
     }
@@ -74,6 +207,10 @@ export function DatingAppSubscriptionImportPanel({ showNotification }) {
 
   const saveToSupabase = async () => {
     if (!preview || !user?.id) return;
+    if (!selectedMonth || !selectedYear || !selectedExcelMode) {
+      showNotification?.('Please select month, year, and one Excel option first.');
+      return;
+    }
     const { sheets, sourceFilename } = preview;
     const toSave = (sheets || []).filter((s) => s.byApp?.length > 0 || s.byCountry?.length > 0);
     if (toSave.length === 0) {
@@ -82,92 +219,94 @@ export function DatingAppSubscriptionImportPanel({ showNotification }) {
     }
 
     setSaving(true);
-    const createdIds = [];
-    let replacedPriorUploads = 0;
+    let createdUploadId = null;
     try {
-      for (const sheet of toSave) {
-        const tab = String(sheet.sheetName || '').trim();
-        const titleRow = sheet.reportTitle ? String(sheet.reportTitle).trim() : '';
-        const reportTitle =
-          tab && titleRow && titleRow.toLowerCase() !== tab.toLowerCase()
-            ? `${tab} — ${titleRow}`
-            : tab || titleRow || null;
+      const monthLabel = monthOptions.find((m) => String(m.value) === String(selectedMonth))?.label || selectedMonth;
+      const modeLabel = selectedExcelMode === 'app' ? 'By App' : 'By Country';
+      const reportTitle = `Display Ads ${modeLabel} - ${monthLabel} ${selectedYear}`;
+      const saveYear = Number(selectedYear);
+      const saveMonth = Number(selectedMonth);
+      const breakdownValue = selectedExcelMode === 'app' ? 'by_app' : 'by_country';
 
-        const period = extractReportYearMonth({
-          sheetName: sheet.sheetName,
-          reportTitle: sheet.reportTitle,
-          sourceFilename: sourceFilename || '',
-        });
+      const { data: existingUpload, error: existingErr } = await supabase
+        .from('dating_app_subscription_uploads')
+        .select('id')
+        .eq('uploaded_by', user.id)
+        .eq('report_year', saveYear)
+        .eq('report_month', saveMonth)
+        .order('uploaded_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (existingErr) throw existingErr;
 
-        if (period?.year != null && period?.month != null) {
-          const { data: removedRows, error: delErr } = await supabase
-            .from('dating_app_subscription_uploads')
-            .delete()
-            .eq('uploaded_by', user.id)
-            .eq('report_year', period.year)
-            .eq('report_month', period.month)
-            .select('id');
-          if (delErr) throw delErr;
-          replacedPriorUploads += removedRows?.length ?? 0;
-        }
-
+      let uploadId = existingUpload?.id || null;
+      if (!uploadId) {
         const { data: uploadRow, error: upErr } = await supabase
           .from('dating_app_subscription_uploads')
           .insert({
-            report_title: reportTitle,
-            report_year: period?.year ?? null,
-            report_month: period?.month ?? null,
-            source_filename: `${sourceFilename || 'upload.xlsx'} (${sheet.sheetName})`,
+            report_title: `Display Ads - ${monthLabel} ${selectedYear}`,
+            report_year: saveYear,
+            report_month: saveMonth,
+            source_filename: sourceFilename || 'upload.csv',
             uploaded_by: user.id,
           })
           .select('id')
           .single();
         if (upErr) throw upErr;
-        const uploadId = uploadRow.id;
-        createdIds.push(uploadId);
-
-        const metricRows = [
-          ...sheet.byApp.map((r) => ({
-            upload_id: uploadId,
-            breakdown: 'by_app',
-            row_label: r.row_label,
-            is_total: r.is_total,
-            spend: r.spend,
-            impressions: r.impressions,
-            clicks: r.clicks,
-            cpm: r.cpm,
-            cpc: r.cpc,
-          })),
-          ...sheet.byCountry.map((r) => ({
-            upload_id: uploadId,
-            breakdown: 'by_country',
-            row_label: r.row_label,
-            is_total: r.is_total,
-            spend: r.spend,
-            impressions: r.impressions,
-            clicks: r.clicks,
-            cpm: r.cpm,
-            cpc: r.cpc,
-          })),
-        ];
-
-        const { error: mErr } = await supabase.from('dating_app_subscription_metrics').insert(metricRows);
-        if (mErr) throw mErr;
+        uploadId = uploadRow.id;
+        createdUploadId = uploadId;
       }
 
+      const metricRows = toSave
+        .flatMap((sheet) => {
+          const sourceRows = selectedExcelMode === 'app' ? (sheet.byApp || []) : (sheet.byCountry || []);
+          return sourceRows.map((r) => ({
+            upload_id: uploadId,
+            breakdown: breakdownValue,
+            row_label: String(r.row_label || '').trim(),
+            is_total: !!r.is_total,
+            spend: parseNumberValue(r.spend),
+            impressions: parseIntegerValue(r.impressions),
+            clicks: parseIntegerValue(r.clicks),
+            cpm: parseNumberValue(r.cpm),
+            cpc: parseNumberValue(r.cpc),
+          }));
+        })
+        .filter((r) => r.row_label);
+
+      if (metricRows.length === 0) {
+        throw new Error('No valid rows found to save for selected upload mode.');
+      }
+
+      const { error: deleteBreakdownErr } = await supabase
+        .from('dating_app_subscription_metrics')
+        .delete()
+        .eq('upload_id', uploadId)
+        .eq('breakdown', breakdownValue);
+      if (deleteBreakdownErr) throw deleteBreakdownErr;
+
+      const { error: mErr } = await supabase.from('dating_app_subscription_metrics').insert(metricRows);
+      if (mErr) throw mErr;
+
+      await supabase
+        .from('dating_app_subscription_uploads')
+        .update({
+          report_title: reportTitle,
+          source_filename: sourceFilename || 'upload.csv',
+        })
+        .eq('id', uploadId);
+
       setPreview(null);
+      setSelectedExcelMode('');
+      setHasDownloadedSample(false);
       await loadUploads();
-      const replaceNote =
-        replacedPriorUploads > 0
-          ? ` Replaced ${replacedPriorUploads} earlier import(s) for the same month & year.`
-          : '';
       showNotification?.(
-        `Saved ${toSave.length} report(s).${replaceNote} View under Subscriptions → Dating app data.`
+        `Saved ${metricRows.length} ${modeLabel} row(s) for ${monthLabel} ${selectedYear}.`
       );
     } catch (err) {
       console.error(err);
-      for (const id of [...createdIds].reverse()) {
-        await supabase.from('dating_app_subscription_uploads').delete().eq('id', id);
+      if (createdUploadId) {
+        await supabase.from('dating_app_subscription_uploads').delete().eq('id', createdUploadId);
       }
       showNotification?.(err.message || 'Save failed');
     } finally {
@@ -203,17 +342,79 @@ export function DatingAppSubscriptionImportPanel({ showNotification }) {
       <div className="card" style={{ marginBottom: 20 }}>
         <div className="gads-filter-row" style={{ flexWrap: 'wrap', gap: 16 }}>
           <div className="gads-filter-group">
-            <label htmlFor="wl-dating-xlsx-input">Excel file (.xlsx)</label>
+            <label htmlFor="wl-dating-month-select">Month</label>
+            <select
+              id="wl-dating-month-select"
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              disabled={fileParsing || saving}
+              style={{ minWidth: 160 }}
+            >
+              <option value="">Select month</option>
+              {monthOptions.map((m) => (
+                <option key={m.value} value={String(m.value)}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="gads-filter-group">
+            <label htmlFor="wl-dating-year-select">Year</label>
+            <select
+              id="wl-dating-year-select"
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(e.target.value)}
+              disabled={fileParsing || saving}
+              style={{ minWidth: 120 }}
+            >
+              <option value="">Select year</option>
+              {yearOptions.map((y) => (
+                <option key={y} value={String(y)}>
+                  {y}
+                </option>
+              ))}
+            </select>
+          </div>
+          {selectedMonth && selectedYear && (
+            <div className="gads-filter-group">
+              <label>Excel buttons (download sample CSV)</label>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={fileParsing || saving}
+                  onClick={() => downloadSampleCsv('app')}
+                >
+                  Download By App Sample CSV
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={fileParsing || saving}
+                  onClick={() => downloadSampleCsv('country')}
+                >
+                  Download By Country Sample CSV
+                </button>
+              </div>
+            </div>
+          )}
+          {selectedMonth && selectedYear && hasDownloadedSample && selectedExcelMode && (
+            <div className="gads-filter-group">
+            <label htmlFor="wl-dating-xlsx-input">CSV file (.csv)</label>
             <input
               ref={fileInputRef}
               id="wl-dating-xlsx-input"
               type="file"
-              accept=".xlsx,.xls"
+              accept=".csv,text/csv"
               onChange={onFile}
               disabled={fileParsing || saving}
               style={{ maxWidth: 320 }}
             />
+            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+              Uploading mode: <strong>{selectedExcelMode === 'app' ? 'By App' : 'By Country'}</strong>
+            </div>
           </div>
+          )}
           {preview && (
             <div className="gads-filter-group" style={{ alignSelf: 'flex-end' }}>
               <button

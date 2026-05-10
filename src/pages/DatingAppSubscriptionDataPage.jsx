@@ -83,6 +83,15 @@ function reportSelectLabel(u, allUploads) {
   return `${base} · ${new Date(u.uploaded_at).toLocaleDateString()}`;
 }
 
+function toPeriodKey(u) {
+  const y = Number(u?.report_year);
+  const m = Number(u?.report_month);
+  if (Number.isFinite(y) && Number.isFinite(m) && m >= 1 && m <= 12) {
+    return `${y}-${String(m).padStart(2, '0')}`;
+  }
+  return `label:${formatReportMonthYear(u)}`;
+}
+
 /** Prefer latest calendar month/year; otherwise most recent upload (first in uploaded_at desc list). */
 function pickDefaultUploadId(uploads) {
   if (!uploads?.length) return null;
@@ -293,15 +302,24 @@ export function DatingAppSubscriptionDataPage() {
     loadMetricsForUpload(selectedUploadId);
   }, [selectedUploadId, loadMetricsForUpload]);
 
+  const uniqueUploads = useMemo(() => {
+    const map = new Map();
+    uploads.forEach((u) => {
+      const key = toPeriodKey(u);
+      if (!map.has(key)) map.set(key, u);
+    });
+    return Array.from(map.values());
+  }, [uploads]);
+
   useEffect(() => {
     if (uploadsLoading) return;
-    if (uploads.length === 0) {
+    if (uniqueUploads.length === 0) {
       setSelectedUploadId(null);
       return;
     }
-    const exists = selectedUploadId && uploads.some((u) => u.id === selectedUploadId);
-    if (!exists) setSelectedUploadId(pickDefaultUploadId(uploads));
-  }, [uploads, uploadsLoading, selectedUploadId]);
+    const exists = selectedUploadId && uniqueUploads.some((u) => u.id === selectedUploadId);
+    if (!exists) setSelectedUploadId(pickDefaultUploadId(uniqueUploads));
+  }, [uniqueUploads, uploadsLoading, selectedUploadId]);
 
   useEffect(() => {
     setActiveTab('app');
@@ -322,8 +340,8 @@ export function DatingAppSubscriptionDataPage() {
   const chartRowsForTab = activeTab === 'app' ? chartAppRows : chartCountryRows;
   useSpendBarChart(spendChartRef, chartRowsForTab);
 
-  const selectedMeta = uploads.find((u) => u.id === selectedUploadId);
-  const reportHeading = selectedMeta ? reportSelectLabel(selectedMeta, uploads) : null;
+  const selectedMeta = uniqueUploads.find((u) => u.id === selectedUploadId);
+  const reportHeading = selectedMeta ? formatReportMonthYear(selectedMeta) : null;
 
   return (
     <div className="page-section active" id="page-dating-app-subscription-data">
@@ -367,13 +385,13 @@ export function DatingAppSubscriptionDataPage() {
                 id="dating-report-select"
                 style={{ minWidth: 280, maxWidth: '100%' }}
                 value={selectedUploadId || ''}
-                disabled={uploadsLoading || uploads.length === 0}
+                disabled={uploadsLoading || uniqueUploads.length === 0}
                 onChange={(e) => setSelectedUploadId(e.target.value || null)}
               >
-                {uploads.length === 0 && <option value="">—</option>}
-                {uploads.map((u) => (
+                {uniqueUploads.length === 0 && <option value="">—</option>}
+                {uniqueUploads.map((u) => (
                   <option key={u.id} value={u.id}>
-                    {reportSelectLabel(u, uploads)}
+                    {formatReportMonthYear(u)}
                   </option>
                 ))}
               </select>
@@ -383,7 +401,7 @@ export function DatingAppSubscriptionDataPage() {
 
         {uploadsLoading && <p style={{ color: 'var(--text-muted)' }}>Loading reports…</p>}
 
-        {!uploadsLoading && uploads.length === 0 && (
+        {!uploadsLoading && uniqueUploads.length === 0 && (
           <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>
             No saved reports yet. Upload a WOW.
             {/* <Link to="/settings" state={{ openDatingAppImport: true }}>
