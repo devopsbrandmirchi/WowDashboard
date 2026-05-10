@@ -173,6 +173,13 @@ interface InsightRow {
   action_values?: Array<{ action_type: string; value: string }>;
 }
 
+interface CampaignCountryInsightRow {
+  campaign_id?: string;
+  campaign_name?: string;
+  country?: string;
+  impressions?: string;
+}
+
 function parseActions(actions: InsightRow["actions"], actionType: string): number {
   if (!Array.isArray(actions)) return 0;
   const a = actions.find((x) => x.action_type === actionType);
@@ -185,8 +192,31 @@ function parseActionValue(actionValues: InsightRow["action_values"], actionType:
   return a?.value ? parseFloat(a.value) || 0 : 0;
 }
 
-/** Map Graph API insight to public.facebook_campaigns_data row (all columns). */
-function toDataRow(insight: InsightRow, accountId: string, dateFromStr: string, dateToStr: string): Record<string, unknown> {
+function pickReferenceCountries(rows: CampaignCountryInsightRow[]): Map<string, string> {
+  const bestByCampaign = new Map<string, { country: string; impressions: number }>();
+  for (const row of rows) {
+    const campaignName = row.campaign_name?.trim();
+    const country = row.country?.trim();
+    if (!campaignName || !country) continue;
+    const impressions = row.impressions != null ? parseInt(String(row.impressions), 10) || 0 : 0;
+    const prev = bestByCampaign.get(campaignName);
+    if (!prev || impressions > prev.impressions) {
+      bestByCampaign.set(campaignName, { country, impressions });
+    }
+  }
+  const out = new Map<string, string>();
+  for (const [campaignName, meta] of bestByCampaign.entries()) out.set(campaignName, meta.country);
+  return out;
+}
+
+/** Map Graph API insight to public.facebook_campaigns_data row (all columns). `country` is campaign-level from country-breakdown insights. */
+function toDataRow(
+  insight: InsightRow,
+  accountId: string,
+  dateFromStr: string,
+  dateToStr: string,
+  country: string | null = null
+): Record<string, unknown> {
   const actions = insight.actions ?? [];
   const actionValues = insight.action_values ?? [];
   const purchaseCount =
@@ -206,6 +236,7 @@ function toDataRow(insight: InsightRow, accountId: string, dateFromStr: string, 
 
   return {
     account_id: accountId || insight.account_id || "",
+    country: country?.trim() || null,
     campaign_name: insight.campaign_name ?? null,
     adset_name: insight.adset_name ?? null,
     ad_name: insight.ad_name ?? null,
@@ -302,11 +333,33 @@ Deno.serve(async (req: Request) => {
       },
       (j) => j.data ?? []
     );
+    const countryInsights = await graphGetAll<CampaignCountryInsightRow>(
+      graphToken,
+      `/${adAccountId}/insights`,
+      {
+        level: "campaign",
+        time_increment: "all_days",
+        time_range: JSON.stringify({ since: dateFromStr, until: dateToStr }),
+        fields: "campaign_id,campaign_name,impressions",
+        breakdowns: "country",
+        limit: "500",
+      },
+      (j) => j.data ?? []
+    );
+    const countryByCampaignName = pickReferenceCountries(countryInsights);
 
     console.log("[fetch-facebook-campaigns] Insights rows:", insights.length);
 
     const accountId = adAccountId.startsWith("act_") ? adAccountId : `act_${adAccountId}`;
-    const rows = insights.map((i) => toDataRow(i, accountId, dateFromStr, dateToStr));
+    const rows = insights.map((i) =>
+      toDataRow(
+        i,
+        accountId,
+        dateFromStr,
+        dateToStr,
+        countryByCampaignName.get((i.campaign_name ?? "").trim()) ?? null
+      )
+    );
 
     await supabase
       .from("facebook_campaigns_data")
@@ -333,18 +386,44 @@ Deno.serve(async (req: Request) => {
     if (uniqueCampaignNames.length > 0) {
       const { data: existing } = await supabase
         .from("facebook_campaigns_reference_data")
-        .select("campaign_name")
+        .select("id,campaign_name,country")
         .in("campaign_name", uniqueCampaignNames);
-      const existingSet = new Set((existing ?? []).map((r) => (r.campaign_name as string)?.trim()).filter(Boolean));
+      const existingByName = new Map(
+        (existing ?? [])
+          .map((r) => {
+            const name = (r.campaign_name as string)?.trim();
+            return name ? [name, r] as const : null;
+          })
+          .filter(Boolean) as [string, { id: number; campaign_name: string; country: string | null }][]
+      );
       const toInsert = uniqueCampaignNames
-        .filter((name) => !existingSet.has(name))
-        .map((campaign_name) => ({ campaign_name, campaign_id: null }));
+        .filter((name) => !existingByName.has(name))
+        .map((campaign_name) => ({
+          campaign_name,
+          campaign_id: null,
+          country: countryByCampaignName.get(campaign_name) ?? null,
+        }));
       if (toInsert.length > 0) {
         const { error: seqErr } = await supabase.rpc("reset_facebook_campaigns_reference_sequence");
         if (seqErr) console.warn("[fetch-facebook-campaigns] Sequence reset failed:", seqErr.message);
         const { error: refErr } = await supabase.from("facebook_campaigns_reference_data").insert(toInsert);
         if (refErr) throw new Error(`facebook_campaigns_reference_data insert: ${refErr.message}`);
         console.log("[fetch-facebook-campaigns] Inserted", toInsert.length, "into facebook_campaigns_reference_data");
+      }
+      const toUpdate = uniqueCampaignNames
+        .map((campaign_name) => {
+          const existingRow = existingByName.get(campaign_name);
+          const derivedCountry = countryByCampaignName.get(campaign_name)?.trim() || null;
+          const existingCountry = existingRow?.country?.trim() || null;
+          if (!existingRow || existingCountry || !derivedCountry) return null;
+          return { id: existingRow.id, country: derivedCountry };
+        })
+        .filter((r): r is { id: number; country: string } => r != null);
+      if (toUpdate.length > 0) {
+        const { error: updateErr } = await supabase
+          .from("facebook_campaigns_reference_data")
+          .upsert(toUpdate, { onConflict: "id", ignoreDuplicates: false });
+        if (updateErr) throw new Error(`facebook_campaigns_reference_data country update: ${updateErr.message}`);
       }
     }
 

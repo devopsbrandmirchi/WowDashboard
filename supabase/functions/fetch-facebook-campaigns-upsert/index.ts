@@ -164,6 +164,13 @@ interface InsightRow {
   action_values?: Array<{ action_type: string; value: string }>;
 }
 
+interface CampaignCountryInsightRow {
+  campaign_id?: string;
+  campaign_name?: string;
+  country?: string;
+  impressions?: string;
+}
+
 function parseActions(actions: InsightRow["actions"], actionType: string): number {
   if (!Array.isArray(actions)) return 0;
   const a = actions.find((x) => x.action_type === actionType);
@@ -176,7 +183,13 @@ function parseActionValue(actionValues: InsightRow["action_values"], actionType:
   return a?.value ? parseFloat(a.value) || 0 : 0;
 }
 
-function toDataRow(insight: InsightRow, accountId: string, dateFromStr: string, dateToStr: string): Record<string, unknown> | null {
+function toDataRow(
+  insight: InsightRow,
+  accountId: string,
+  dateFromStr: string,
+  dateToStr: string,
+  country: string | null = null
+): Record<string, unknown> | null {
   if (!insight.ad_id || !insight.date_start) return null;
   const actions = insight.actions ?? [];
   const actionValues = insight.action_values ?? [];
@@ -197,6 +210,7 @@ function toDataRow(insight: InsightRow, accountId: string, dateFromStr: string, 
 
   return {
     account_id: accountId || insight.account_id || "",
+    country: country?.trim() || null,
     campaign_name: insight.campaign_name ?? null,
     adset_name: insight.adset_name ?? null,
     ad_name: insight.ad_name ?? null,
@@ -271,6 +285,23 @@ function isMissingTableError(message: string, tableName: string): boolean {
   return m.includes("could not find the table") && m.includes(t) && m.includes("schema cache");
 }
 
+function pickReferenceCountries(rows: CampaignCountryInsightRow[]): Map<string, string> {
+  const bestByCampaign = new Map<string, { country: string; impressions: number }>();
+  for (const row of rows) {
+    const campaignName = row.campaign_name?.trim();
+    const country = row.country?.trim();
+    if (!campaignName || !country) continue;
+    const impressions = row.impressions != null ? parseInt(String(row.impressions), 10) || 0 : 0;
+    const prev = bestByCampaign.get(campaignName);
+    if (!prev || impressions > prev.impressions) {
+      bestByCampaign.set(campaignName, { country, impressions });
+    }
+  }
+  const out = new Map<string, string>();
+  for (const [campaignName, meta] of bestByCampaign.entries()) out.set(campaignName, meta.country);
+  return out;
+}
+
 Deno.serve(async (req: Request) => {
   console.log(LOG, new Date().toISOString());
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -334,9 +365,31 @@ Deno.serve(async (req: Request) => {
       },
       (j) => j.data ?? []
     );
+    const countryInsights = await graphGetAll<CampaignCountryInsightRow>(
+      graphToken,
+      `/${adAccountId}/insights`,
+      {
+        level: "campaign",
+        time_increment: "all_days",
+        time_range: JSON.stringify({ since: dateFromStr, until: dateToStr }),
+        fields: "campaign_id,campaign_name,impressions",
+        breakdowns: "country",
+        limit: "500",
+      },
+      (j) => j.data ?? []
+    );
+    const countryByCampaignName = pickReferenceCountries(countryInsights);
 
     const rows = insights
-      .map((i) => toDataRow(i, accountId, dateFromStr, dateToStr))
+      .map((i) =>
+        toDataRow(
+          i,
+          accountId,
+          dateFromStr,
+          dateToStr,
+          countryByCampaignName.get((i.campaign_name ?? "").trim()) ?? null
+        )
+      )
       .filter((r): r is Record<string, unknown> => r != null);
 
     const dedupe = new Map<string, Record<string, unknown>>();
@@ -368,14 +421,45 @@ Deno.serve(async (req: Request) => {
 
     const uniqueCampaignNames = [...new Set(uniqueRows.map((r) => (r.campaign_name as string)?.trim()).filter(Boolean))];
     if (uniqueCampaignNames.length > 0) {
-      const { data: existing } = await supabase.from("facebook_campaigns_reference_data").select("campaign_name").in("campaign_name", uniqueCampaignNames);
-      const existingSet = new Set((existing ?? []).map((r) => (r.campaign_name as string)?.trim()).filter(Boolean));
-      const toInsert = uniqueCampaignNames.filter((n) => !existingSet.has(n)).map((campaign_name) => ({ campaign_name, campaign_id: null }));
+      const { data: existing } = await supabase
+        .from("facebook_campaigns_reference_data")
+        .select("id,campaign_name,country")
+        .in("campaign_name", uniqueCampaignNames);
+      const existingByName = new Map(
+        (existing ?? [])
+          .map((r) => {
+            const name = (r.campaign_name as string)?.trim();
+            return name ? [name, r] as const : null;
+          })
+          .filter(Boolean) as [string, { id: number; campaign_name: string; country: string | null }][]
+      );
+      const toInsert = uniqueCampaignNames
+        .filter((name) => !existingByName.has(name))
+        .map((campaign_name) => ({
+          campaign_name,
+          campaign_id: null,
+          country: countryByCampaignName.get(campaign_name) ?? null,
+        }));
       if (toInsert.length > 0) {
         const { error: seqErr } = await supabase.rpc("reset_facebook_campaigns_reference_sequence");
         if (seqErr) console.warn(LOG, "sequence", seqErr.message);
         const { error: refErr } = await supabase.from("facebook_campaigns_reference_data").insert(toInsert);
         if (refErr) throw new Error(`facebook_campaigns_reference_data: ${refErr.message}`);
+      }
+      const toUpdate = uniqueCampaignNames
+        .map((campaign_name) => {
+          const existingRow = existingByName.get(campaign_name);
+          const derivedCountry = countryByCampaignName.get(campaign_name)?.trim() || null;
+          const existingCountry = existingRow?.country?.trim() || null;
+          if (!existingRow || existingCountry || !derivedCountry) return null;
+          return { id: existingRow.id, country: derivedCountry };
+        })
+        .filter((r): r is { id: number; country: string } => r != null);
+      if (toUpdate.length > 0) {
+        const { error: updateErr } = await supabase
+          .from("facebook_campaigns_reference_data")
+          .upsert(toUpdate, { onConflict: "id", ignoreDuplicates: false });
+        if (updateErr) throw new Error(`facebook_campaigns_reference_data country update: ${updateErr.message}`);
       }
     }
 

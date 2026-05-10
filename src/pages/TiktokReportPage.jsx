@@ -268,19 +268,6 @@ export function TiktokReportPage() {
         const pageSize = 1000;
         let offset = 0;
         const rows = [];
-        const { data: referenceRows, error: referenceError } = await supabase
-          .from('tiktok_campaigns_reference_data')
-          .select('campaign_name,country');
-        if (referenceError) throw referenceError;
-        const referenceCountryByCampaign = new Map();
-        (referenceRows || []).forEach((ref) => {
-          const campaignName = (ref.campaign_name || '').toString().trim();
-          if (!campaignName) return;
-          if (!referenceCountryByCampaign.has(campaignName)) {
-            referenceCountryByCampaign.set(campaignName, (ref.country || '').toString().trim());
-          }
-        });
-
         while (true) {
           let q = supabase
             .from('tiktok_campaigns_data')
@@ -301,9 +288,7 @@ export function TiktokReportPage() {
 
         const map = new Map();
         rows.forEach((r) => {
-          const campaignName = (r.campaign_name || '').toString().trim();
-          const fallbackCountry = campaignName ? (referenceCountryByCampaign.get(campaignName) || '') : '';
-          const country = (r.country || '').toString().trim() || fallbackCountry || 'Undefined';
+          const country = (r.country || '').toString().trim() || 'Undefined';
           if (!map.has(country)) {
             map.set(country, { key: country, name: country, cost: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0 });
           }

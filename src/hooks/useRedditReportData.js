@@ -97,6 +97,7 @@ function normalizeCampaignRow(r) {
     campaign_name: r.campaign_name ?? r.campaign ?? '',
     ad_group_name: r.ad_group_name ?? r.adgroup_name ?? r.campaign_name ?? '',
     community: r.community ?? r.subreddit ?? '',
+    country: (r.country ?? '').toString().trim() || null,
     day,
     impressions,
     clicks,
@@ -287,8 +288,7 @@ export function useRedditReportData() {
   const countryData = useMemo(() => {
     const map = new Map();
     rawCampaigns.forEach((r) => {
-      const ref = getRef(r.campaign_name);
-      const country = (ref && ref.country) ? ref.country : 'Unknown';
+      const country = r.country || 'Unknown';
       if (!map.has(country)) map.set(country, { key: country, name: country, impressions: 0, clicks: 0, cost: 0, purchases: 0 });
       const a = map.get(country);
       a.impressions += r.impressions;
@@ -297,7 +297,7 @@ export function useRedditReportData() {
       a.purchases += r.purchases;
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [rawCampaigns, getRef]);
+  }, [rawCampaigns]);
 
   const productData = useMemo(() => {
     const map = new Map();

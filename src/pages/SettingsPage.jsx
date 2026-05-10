@@ -22,69 +22,24 @@ function formatSyncLogStats(platform, meta) {
     if (kw != null) parts.push(`${kw} keywords`);
     return parts.length ? parts.join(', ') : '—';
   }
-  if (platform === 'google_ads_country') {
-    const c = meta.campaigns ?? meta.campaign;
-    const ag = meta.ad_groups;
-    const kw = meta.keywords;
-    const countries = Array.isArray(meta.countries) && meta.countries.length
-      ? ` | ${meta.countries.join(', ')}`
-      : '';
-    const parts = [];
-    if (c != null) parts.push(`${c} campaigns`);
-    if (ag != null) parts.push(`${ag} ad groups`);
-    if (kw != null) parts.push(`${kw} keywords`);
-    return (parts.length ? parts.join(', ') : '—') + countries;
-  }
   if (platform === 'reddit_ads') {
     const a = meta.ad_group_rows;
     const p = meta.placement_rows;
     if (a != null || p != null) return `${a ?? 0} ad grp / ${p ?? 0} placement`;
     return '—';
   }
-  if (platform === 'reddit_ads_country') {
-    const a = meta.ad_group_rows;
-    const p = meta.placement_rows;
-    const countries = Array.isArray(meta.countries) && meta.countries.length
-      ? ` | ${meta.countries.join(', ')}`
-      : '';
-    if (a != null || p != null) return `${a ?? 0} ad grp / ${p ?? 0} placement${countries}`;
-    return '—';
-  }
   if (platform === 'facebook_ads') {
     const n = meta.insight_rows;
     return n != null ? `${n} ads` : '—';
-  }
-  if (platform === 'facebook_ads_country') {
-    const n = meta.insight_rows;
-    const countries = Array.isArray(meta.countries) && meta.countries.length
-      ? ` | ${meta.countries.join(', ')}`
-      : '';
-    return (n != null ? `${n} ads` : '—') + countries;
   }
   if (platform === 'tiktok_ads') {
     const n = meta.report_rows;
     return n != null ? `${n} rows` : '—';
   }
-  if (platform === 'tiktok_ads_country') {
-    const n = meta.report_rows;
-    const countries = Array.isArray(meta.countries) && meta.countries.length
-      ? ` | ${meta.countries.join(', ')}`
-      : '';
-    return (n != null ? `${n} rows` : '—') + countries;
-  }
   if (platform === 'microsoft_ads') {
     const a = meta.ad_group_rows;
     const p = meta.placement_rows;
     if (a != null || p != null) return `${a ?? 0} ad grp / ${p ?? 0} placement`;
-    return '—';
-  }
-  if (platform === 'microsoft_ads_country') {
-    const a = meta.ad_group_rows;
-    const p = meta.placement_rows;
-    const countries = Array.isArray(meta.countries) && meta.countries.length
-      ? ` | ${meta.countries.join(', ')}`
-      : '';
-    if (a != null || p != null) return `${a ?? 0} ad grp / ${p ?? 0} placement${countries}`;
     return '—';
   }
   return '—';
@@ -108,15 +63,10 @@ function fmtSyncAt(iso) {
 
 const SETTINGS_NAV_BASE = [
   { id: 'google-ads', label: 'Google Ads' },
-  { id: 'google-ads-country', label: 'Google Ads Country' },
   { id: 'reddit', label: 'Reddit Ads' },
-  { id: 'reddit-country', label: 'Reddit Ads Country' },
   { id: 'meta', label: 'Facebook / Meta Ads' },
-  { id: 'meta-country', label: 'Facebook Ads Country' },
   { id: 'tiktok', label: 'TikTok Ads' },
-  { id: 'tiktok-country', label: 'TikTok Ads Country' },
   { id: 'bing', label: 'Bing / Microsoft Ads' },
-  { id: 'bing-country', label: 'Bing Ads Country' },
   { id: 'dating-app-data', label: 'Dating app data' },
   { id: 'branding', label: 'White Label & Branding' },
 ];
@@ -490,482 +440,6 @@ function AdsPlatformPanel({ showNotification, title, connectDescription, onSync,
   );
 }
 
-function GoogleAdsCountryPanel({ showNotification }) {
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [syncing, setSyncing] = useState(false);
-  const [logRows, setLogRows] = useState([]);
-  const [logLoading, setLogLoading] = useState(false);
-  const [logError, setLogError] = useState(null);
-
-  const loadSyncLog = useCallback(async () => {
-    setLogLoading(true);
-    setLogError(null);
-    const { data, error } = await supabase
-      .from('ads_sync_by_date_log')
-      .select('account_id, segment_date, synced_at, date_range_start, date_range_end, run_id, metadata')
-      .eq('platform', 'google_ads_country')
-      .order('synced_at', { ascending: false })
-      .limit(120);
-    setLogLoading(false);
-    if (error) {
-      setLogError(error.message || 'Could not load country sync log.');
-      setLogRows([]);
-      return;
-    }
-    setLogRows(data ?? []);
-  }, []);
-
-  useEffect(() => {
-    loadSyncLog();
-  }, [loadSyncLog]);
-
-  const handleSync = async () => {
-    if (!startDate || !endDate) {
-      showNotification('Select a start and end date.');
-      return;
-    }
-    if (startDate > endDate) {
-      showNotification('End date must be on or after start date.');
-      return;
-    }
-    setSyncing(true);
-    try {
-      const { data, error } = await invokeEdgeFunction('sync-google-ads-data-country', {
-        date_from: startDate,
-        date_to: endDate,
-      });
-      if (error) throw new Error(error.message || 'Edge function error');
-      if (data?.error) throw new Error(data.message || data.error);
-      showNotification('Google Ads country sync completed.');
-      loadSyncLog();
-    } catch (e) {
-      showNotification(e?.message || String(e) || 'Country sync failed.');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  return (
-    <div className="wl-settings-card">
-      <h2 className="wl-settings-subtitle">Google Ads Country</h2>
-      <p className="wl-settings-desc" style={{ marginTop: 8 }}>
-        Sync Google Ads data with country from campaign API and review latest rows by account, country, and report date.
-      </p>
-      <div className="wl-ads-date-sync">
-        <div className="wl-date-range-inputs wl-date-range-inputs--lg">
-          <input type="date" className="wl-input-date" aria-label="Start date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          <span className="wl-date-to">to</span>
-          <input type="date" className="wl-input-date" aria-label="End date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-        </div>
-        <button type="button" className="wl-btn wl-btn--primary" onClick={handleSync} disabled={syncing}>
-          {syncing ? 'Syncing…' : 'Sync'}
-        </button>
-      </div>
-
-      <div className="wl-sync-log-section">
-        <div className="wl-sync-log-header">
-          <h3 className="wl-sync-log-title">Sync log</h3>
-          <button type="button" className="wl-btn wl-btn--outline wl-btn--sm" onClick={loadSyncLog} disabled={logLoading}>
-            {logLoading ? 'Loading…' : 'Refresh'}
-          </button>
-        </div>
-        {logError && <p className="wl-sync-log-error">{logError}</p>}
-        {!logError && logRows.length === 0 && !logLoading && (
-          <p className="wl-settings-desc">No country sync rows yet. Run a sync above.</p>
-        )}
-        {(logRows.length > 0 || logLoading) && !logError && (
-          <div className="wl-table-wrap wl-sync-log-table-wrap">
-            <table className="wl-settings-table wl-sync-log-table">
-              <thead>
-                <tr>
-                  <th>Synced</th>
-                  <th>Account</th>
-                  <th>Report date</th>
-                  <th>Range synced</th>
-                  <th>Rows / stats</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logRows.map((row) => (
-                  <tr key={`${row.run_id}-${row.account_id}-${row.segment_date}-${row.synced_at}`}>
-                    <td className="wl-td-mono">{fmtSyncAt(row.synced_at)}</td>
-                    <td className="wl-td-mono">{row.account_id}</td>
-                    <td>{row.segment_date}</td>
-                    <td className="wl-td-muted">
-                      {row.date_range_start && row.date_range_end
-                        ? `${row.date_range_start} → ${row.date_range_end}`
-                        : '—'}
-                    </td>
-                    <td className="wl-td-muted">{formatSyncLogStats('google_ads_country', row.metadata)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function MetaAdsCountryPanel({ showNotification }) {
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [syncing, setSyncing] = useState(false);
-  const [logRows, setLogRows] = useState([]);
-  const [logLoading, setLogLoading] = useState(false);
-  const [logError, setLogError] = useState(null);
-
-  const loadSyncLog = useCallback(async () => {
-    setLogLoading(true);
-    setLogError(null);
-    const { data, error } = await supabase
-      .from('ads_sync_by_date_log')
-      .select('account_id, segment_date, synced_at, date_range_start, date_range_end, run_id, metadata')
-      .eq('platform', 'facebook_ads_country')
-      .order('synced_at', { ascending: false })
-      .limit(120);
-    setLogLoading(false);
-    if (error) {
-      setLogError(error.message || 'Could not load Facebook country sync log.');
-      setLogRows([]);
-      return;
-    }
-    setLogRows(data ?? []);
-  }, []);
-
-  useEffect(() => {
-    loadSyncLog();
-  }, [loadSyncLog]);
-
-  const handleSync = async () => {
-    if (!startDate || !endDate) {
-      showNotification('Select a start and end date.');
-      return;
-    }
-    if (startDate > endDate) {
-      showNotification('End date must be on or after start date.');
-      return;
-    }
-    setSyncing(true);
-    try {
-      const { data, error } = await invokeEdgeFunction('fetch-facebook-campaigns-upsert-country', {
-        date_from: startDate,
-        date_to: endDate,
-      });
-      if (error) throw new Error(error.message || 'Edge function error');
-      if (data?.error) throw new Error(data.message || data.error);
-      showNotification('Facebook Ads country sync completed.');
-      loadSyncLog();
-    } catch (e) {
-      showNotification(e?.message || String(e) || 'Country sync failed.');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  return (
-    <div className="wl-settings-card">
-      <h2 className="wl-settings-subtitle">Facebook Ads Country</h2>
-      <p className="wl-settings-desc" style={{ marginTop: 8 }}>
-        Sync Facebook Ads data with country breakdown into a separate country table.
-      </p>
-      <div className="wl-ads-date-sync">
-        <div className="wl-date-range-inputs wl-date-range-inputs--lg">
-          <input type="date" className="wl-input-date" aria-label="Start date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          <span className="wl-date-to">to</span>
-          <input type="date" className="wl-input-date" aria-label="End date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-        </div>
-        <button type="button" className="wl-btn wl-btn--primary" onClick={handleSync} disabled={syncing}>
-          {syncing ? 'Syncing…' : 'Sync'}
-        </button>
-      </div>
-
-      <div className="wl-sync-log-section">
-        <div className="wl-sync-log-header">
-          <h3 className="wl-sync-log-title">Sync log</h3>
-          <button type="button" className="wl-btn wl-btn--outline wl-btn--sm" onClick={loadSyncLog} disabled={logLoading}>
-            {logLoading ? 'Loading…' : 'Refresh'}
-          </button>
-        </div>
-        {logError && <p className="wl-sync-log-error">{logError}</p>}
-        {!logError && logRows.length === 0 && !logLoading && (
-          <p className="wl-settings-desc">No Facebook country sync rows yet. Run a sync above.</p>
-        )}
-        {(logRows.length > 0 || logLoading) && !logError && (
-          <div className="wl-table-wrap wl-sync-log-table-wrap">
-            <table className="wl-settings-table wl-sync-log-table">
-              <thead>
-                <tr>
-                  <th>Synced</th>
-                  <th>Account</th>
-                  <th>Report date</th>
-                  <th>Range synced</th>
-                  <th>Rows / stats</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logRows.map((row) => (
-                  <tr key={`${row.run_id}-${row.account_id}-${row.segment_date}-${row.synced_at}`}>
-                    <td className="wl-td-mono">{fmtSyncAt(row.synced_at)}</td>
-                    <td className="wl-td-mono">{row.account_id}</td>
-                    <td>{row.segment_date}</td>
-                    <td className="wl-td-muted">
-                      {row.date_range_start && row.date_range_end
-                        ? `${row.date_range_start} → ${row.date_range_end}`
-                        : '—'}
-                    </td>
-                    <td className="wl-td-muted">{formatSyncLogStats('facebook_ads_country', row.metadata)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function RedditAdsCountryPanel({ showNotification }) {
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [syncing, setSyncing] = useState(false);
-  const [logRows, setLogRows] = useState([]);
-  const [logLoading, setLogLoading] = useState(false);
-  const [logError, setLogError] = useState(null);
-
-  const loadSyncLog = useCallback(async () => {
-    setLogLoading(true);
-    setLogError(null);
-    const { data, error } = await supabase
-      .from('ads_sync_by_date_log')
-      .select('account_id, segment_date, synced_at, date_range_start, date_range_end, run_id, metadata')
-      .eq('platform', 'reddit_ads_country')
-      .order('synced_at', { ascending: false })
-      .limit(120);
-    setLogLoading(false);
-    if (error) {
-      setLogError(error.message || 'Could not load Reddit country sync log.');
-      setLogRows([]);
-      return;
-    }
-    setLogRows(data ?? []);
-  }, []);
-
-  useEffect(() => {
-    loadSyncLog();
-  }, [loadSyncLog]);
-
-  const handleSync = async () => {
-    if (!startDate || !endDate) {
-      showNotification('Select a start and end date.');
-      return;
-    }
-    if (startDate > endDate) {
-      showNotification('End date must be on or after start date.');
-      return;
-    }
-    setSyncing(true);
-    try {
-      const { data, error } = await invokeEdgeFunction('fetch-reddit-campaigns-upsert-country', {
-        date_from: startDate,
-        date_to: endDate,
-      });
-      if (error) throw new Error(error.message || 'Edge function error');
-      if (data?.error) throw new Error(data.message || data.error);
-      showNotification('Reddit Ads country sync completed.');
-      loadSyncLog();
-    } catch (e) {
-      showNotification(e?.message || String(e) || 'Country sync failed.');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  return (
-    <div className="wl-settings-card">
-      <h2 className="wl-settings-subtitle">Reddit Ads Country</h2>
-      <p className="wl-settings-desc" style={{ marginTop: 8 }}>
-        Sync Reddit Ads data with country breakdown into a separate country table without affecting the existing Reddit sync.
-      </p>
-      <div className="wl-ads-date-sync">
-        <div className="wl-date-range-inputs wl-date-range-inputs--lg">
-          <input type="date" className="wl-input-date" aria-label="Start date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          <span className="wl-date-to">to</span>
-          <input type="date" className="wl-input-date" aria-label="End date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-        </div>
-        <button type="button" className="wl-btn wl-btn--primary" onClick={handleSync} disabled={syncing}>
-          {syncing ? 'Syncing…' : 'Sync'}
-        </button>
-      </div>
-
-      <div className="wl-sync-log-section">
-        <div className="wl-sync-log-header">
-          <h3 className="wl-sync-log-title">Sync log</h3>
-          <button type="button" className="wl-btn wl-btn--outline wl-btn--sm" onClick={loadSyncLog} disabled={logLoading}>
-            {logLoading ? 'Loading…' : 'Refresh'}
-          </button>
-        </div>
-        {logError && <p className="wl-sync-log-error">{logError}</p>}
-        {!logError && logRows.length === 0 && !logLoading && (
-          <p className="wl-settings-desc">No Reddit country sync rows yet. Run a sync above.</p>
-        )}
-        {(logRows.length > 0 || logLoading) && !logError && (
-          <div className="wl-table-wrap wl-sync-log-table-wrap">
-            <table className="wl-settings-table wl-sync-log-table">
-              <thead>
-                <tr>
-                  <th>Synced</th>
-                  <th>Account</th>
-                  <th>Report date</th>
-                  <th>Range synced</th>
-                  <th>Rows / stats</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logRows.map((row) => (
-                  <tr key={`${row.run_id}-${row.account_id}-${row.segment_date}-${row.synced_at}`}>
-                    <td className="wl-td-mono">{fmtSyncAt(row.synced_at)}</td>
-                    <td className="wl-td-mono">{row.account_id}</td>
-                    <td>{row.segment_date}</td>
-                    <td className="wl-td-muted">
-                      {row.date_range_start && row.date_range_end
-                        ? `${row.date_range_start} → ${row.date_range_end}`
-                        : '—'}
-                    </td>
-                    <td className="wl-td-muted">{formatSyncLogStats('reddit_ads_country', row.metadata)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function TikTokAdsCountryPanel({ showNotification }) {
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [syncing, setSyncing] = useState(false);
-  const [logRows, setLogRows] = useState([]);
-  const [logLoading, setLogLoading] = useState(false);
-  const [logError, setLogError] = useState(null);
-
-  const loadSyncLog = useCallback(async () => {
-    setLogLoading(true);
-    setLogError(null);
-    const { data, error } = await supabase
-      .from('ads_sync_by_date_log')
-      .select('account_id, segment_date, synced_at, date_range_start, date_range_end, run_id, metadata')
-      .eq('platform', 'tiktok_ads_country')
-      .order('synced_at', { ascending: false })
-      .limit(120);
-    setLogLoading(false);
-    if (error) {
-      setLogError(error.message || 'Could not load TikTok country sync log.');
-      setLogRows([]);
-      return;
-    }
-    setLogRows(data ?? []);
-  }, []);
-
-  useEffect(() => {
-    loadSyncLog();
-  }, [loadSyncLog]);
-
-  const handleSync = async () => {
-    if (!startDate || !endDate) {
-      showNotification('Select a start and end date.');
-      return;
-    }
-    if (startDate > endDate) {
-      showNotification('End date must be on or after start date.');
-      return;
-    }
-    setSyncing(true);
-    try {
-      const { data, error } = await invokeEdgeFunction('fetch-tiktok-campaigns-upsert-country', {
-        date_from: startDate,
-        date_to: endDate,
-      });
-      if (error) throw new Error(error.message || 'Edge function error');
-      if (data?.error) throw new Error(data.message || data.error);
-      showNotification('TikTok Ads country sync completed.');
-      loadSyncLog();
-    } catch (e) {
-      showNotification(e?.message || String(e) || 'Country sync failed.');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  return (
-    <div className="wl-settings-card">
-      <h2 className="wl-settings-subtitle">TikTok Ads Country</h2>
-      <p className="wl-settings-desc" style={{ marginTop: 8 }}>
-        Sync TikTok Ads data with country breakdown into a separate country table without affecting the existing TikTok sync.
-      </p>
-      <div className="wl-ads-date-sync">
-        <div className="wl-date-range-inputs wl-date-range-inputs--lg">
-          <input type="date" className="wl-input-date" aria-label="Start date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          <span className="wl-date-to">to</span>
-          <input type="date" className="wl-input-date" aria-label="End date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-        </div>
-        <button type="button" className="wl-btn wl-btn--primary" onClick={handleSync} disabled={syncing}>
-          {syncing ? 'Syncing…' : 'Sync'}
-        </button>
-      </div>
-
-      <div className="wl-sync-log-section">
-        <div className="wl-sync-log-header">
-          <h3 className="wl-sync-log-title">Sync log</h3>
-          <button type="button" className="wl-btn wl-btn--outline wl-btn--sm" onClick={loadSyncLog} disabled={logLoading}>
-            {logLoading ? 'Loading…' : 'Refresh'}
-          </button>
-        </div>
-        {logError && <p className="wl-sync-log-error">{logError}</p>}
-        {!logError && logRows.length === 0 && !logLoading && (
-          <p className="wl-settings-desc">No TikTok country sync rows yet. Run a sync above.</p>
-        )}
-        {(logRows.length > 0 || logLoading) && !logError && (
-          <div className="wl-table-wrap wl-sync-log-table-wrap">
-            <table className="wl-settings-table wl-sync-log-table">
-              <thead>
-                <tr>
-                  <th>Synced</th>
-                  <th>Account</th>
-                  <th>Report date</th>
-                  <th>Range synced</th>
-                  <th>Rows / stats</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logRows.map((row) => (
-                  <tr key={`${row.run_id}-${row.account_id}-${row.segment_date}-${row.synced_at}`}>
-                    <td className="wl-td-mono">{fmtSyncAt(row.synced_at)}</td>
-                    <td className="wl-td-mono">{row.account_id}</td>
-                    <td>{row.segment_date}</td>
-                    <td className="wl-td-muted">
-                      {row.date_range_start && row.date_range_end
-                        ? `${row.date_range_start} → ${row.date_range_end}`
-                        : '—'}
-                    </td>
-                    <td className="wl-td-muted">{formatSyncLogStats('tiktok_ads_country', row.metadata)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function BrandingPanel({ branding, updateBranding, colors, updateColors, resetSettings, showNotification }) {
   const [agencyName, setAgencyName] = useState(branding.agencyName);
   const [agencyLogo, setAgencyLogo] = useState(branding.agencyLogo);
@@ -1194,9 +668,6 @@ export function SettingsPage() {
                 }}
               />
             )}
-            {activeNav === 'google-ads-country' && (
-              <GoogleAdsCountryPanel showNotification={showNotification} />
-            )}
             {activeNav === 'reddit' && (
               <AdsPlatformPanel
                 showNotification={showNotification}
@@ -1212,9 +683,6 @@ export function SettingsPage() {
                   if (data?.error) throw new Error(data.message || data.error);
                 }}
               />
-            )}
-            {activeNav === 'reddit-country' && (
-              <RedditAdsCountryPanel showNotification={showNotification} />
             )}
             {activeNav === 'meta' && (
               <AdsPlatformPanel
@@ -1239,9 +707,6 @@ export function SettingsPage() {
                 }}
               />
             )}
-            {activeNav === 'meta-country' && (
-              <MetaAdsCountryPanel showNotification={showNotification} />
-            )}
             {activeNav === 'tiktok' && (
               <AdsPlatformPanel
                 showNotification={showNotification}
@@ -1258,9 +723,6 @@ export function SettingsPage() {
                 }}
               />
             )}
-            {activeNav === 'tiktok-country' && (
-              <TikTokAdsCountryPanel showNotification={showNotification} />
-            )}
             {activeNav === 'bing' && (
               <AdsPlatformPanel
                 showNotification={showNotification}
@@ -1269,22 +731,6 @@ export function SettingsPage() {
                 syncLogPlatform="microsoft_ads"
                 onSync={async (dateFrom, dateTo) => {
                   const { data, error } = await invokeEdgeFunction('sync-microsoft-ads', {
-                    date_from: dateFrom,
-                    date_to: dateTo,
-                  });
-                  if (error) throw new Error(error.message || 'Edge function error');
-                  if (data?.error) throw new Error(data.message || data.error);
-                }}
-              />
-            )}
-            {activeNav === 'bing-country' && (
-              <AdsPlatformPanel
-                showNotification={showNotification}
-                title="Bing Ads Country"
-                connectDescription="Sync Microsoft Advertising data with country breakdown into dedicated country tables."
-                syncLogPlatform="microsoft_ads_country"
-                onSync={async (dateFrom, dateTo) => {
-                  const { data, error } = await invokeEdgeFunction('sync-microsoft-ads-country', {
                     date_from: dateFrom,
                     date_to: dateTo,
                   });

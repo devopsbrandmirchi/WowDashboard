@@ -459,6 +459,120 @@ function publisherReportXml(accountId: string, from: Date, to: Date): string {
   </ReportRequest>`;
 }
 
+function geographicReportXml(accountId: string, from: Date, to: Date): string {
+  return `<ReportRequest i:type="GeographicPerformanceReportRequest"
+    xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+    <Format>Csv</Format>
+    <Language>English</Language>
+    <ReportName>GeographicPerformanceReferenceReport</ReportName>
+    <ReturnOnlyCompleteData>false</ReturnOnlyCompleteData>
+    <Aggregation>Daily</Aggregation>
+    <Columns>
+      <GeographicPerformanceReportColumn>AccountId</GeographicPerformanceReportColumn>
+      <GeographicPerformanceReportColumn>CampaignId</GeographicPerformanceReportColumn>
+      <GeographicPerformanceReportColumn>CampaignName</GeographicPerformanceReportColumn>
+      <GeographicPerformanceReportColumn>AdGroupId</GeographicPerformanceReportColumn>
+      <GeographicPerformanceReportColumn>AdGroupName</GeographicPerformanceReportColumn>
+      <GeographicPerformanceReportColumn>Country</GeographicPerformanceReportColumn>
+      <GeographicPerformanceReportColumn>MostSpecificLocation</GeographicPerformanceReportColumn>
+      <GeographicPerformanceReportColumn>LocationType</GeographicPerformanceReportColumn>
+      <GeographicPerformanceReportColumn>TimePeriod</GeographicPerformanceReportColumn>
+      <GeographicPerformanceReportColumn>Impressions</GeographicPerformanceReportColumn>
+      <GeographicPerformanceReportColumn>Clicks</GeographicPerformanceReportColumn>
+      <GeographicPerformanceReportColumn>Spend</GeographicPerformanceReportColumn>
+      <GeographicPerformanceReportColumn>Conversions</GeographicPerformanceReportColumn>
+    </Columns>
+    <Filter i:nil="true"/>
+    <Scope>
+      <AccountIds xmlns:a="http://schemas.microsoft.com/2003/10/Serialization/Arrays">
+        <a:long>${accountId}</a:long>
+      </AccountIds>
+    </Scope>
+    <Time>${buildDateRange(from, to)}</Time>
+  </ReportRequest>`;
+}
+
+function pickCountryFromGeoRow(r: Record<string, string>): string {
+  const c = (r["Country"] ?? r["Country/Region"] ?? r["Country Code"] ?? r["CountryCode"] ?? "").trim();
+  if (c) return c;
+  const locationType = (r["Location type"] ?? r["LocationType"] ?? "").trim().toLowerCase();
+  const mostSpecific = (r["Most specific location"] ?? r["MostSpecificLocation"] ?? "").trim();
+  if (mostSpecific && (locationType === "country" || !locationType)) return mostSpecific;
+  return "unknown";
+}
+
+/** Distinct (campaign_name, country) from geographic report rows for reference_data. */
+function referencePairsFromGeoRows(geoRows: Record<string, string>[]): { campaign_name: string; country: string }[] {
+  const m = new Map<string, { campaign_name: string; country: string }>();
+  for (const r of geoRows) {
+    const campaign_name = (r["Campaign"] ?? r["CampaignName"] ?? "").trim();
+    const country = pickCountryFromGeoRow(r);
+    if (!campaign_name || !country || country === "unknown") continue;
+    m.set(`${campaign_name}\t${country}`, { campaign_name, country });
+  }
+  return [...m.values()];
+}
+
+interface GeoAgg {
+  spend: number;
+  impr: number;
+}
+
+/** Same dimensions as microsoft_campaigns_ad_group upsert key; pick country with largest geo Spend (then Impressions). */
+function adGroupCountryFromGeoRows(
+  geoRows: Record<string, string>[],
+  fallbackAccountId: string
+): Map<string, string> {
+  const perKey = new Map<string, Map<string, GeoAgg>>();
+
+  for (const r of geoRows) {
+    const campaign_date = parseMsDate(r["Time period"] ?? r["TimePeriod"] ?? r["Day"] ?? "");
+    if (!campaign_date) continue;
+    const account_id = String(r["Account ID"] ?? r["AccountId"] ?? fallbackAccountId).trim();
+    const campaign_name = String(r["Campaign"] ?? r["CampaignName"] ?? "").trim();
+    const ad_group_name = String(r["Ad group"] ?? r["AdGroupName"] ?? "").trim();
+    if (!campaign_name || !ad_group_name) continue;
+    const country = pickCountryFromGeoRow(r);
+    if (!country || country === "unknown") continue;
+    const spend = parseNum(r["Spend"] ?? "") ?? 0;
+    const impr = parseNum(r["Impressions"] ?? "") ?? 0;
+    const rowKey = `${account_id}\t${campaign_date}\t${campaign_name}\t${ad_group_name}`;
+    if (!perKey.has(rowKey)) perKey.set(rowKey, new Map());
+    const byCountry = perKey.get(rowKey)!;
+    const prev = byCountry.get(country);
+    if (prev) {
+      prev.spend += spend;
+      prev.impr += impr;
+    } else {
+      byCountry.set(country, { spend, impr });
+    }
+  }
+
+  const out = new Map<string, string>();
+  for (const [rowKey, byCountry] of perKey) {
+    let best = "";
+    let bestSpend = -1;
+    let bestImpr = -1;
+    for (const [country, { spend, impr }] of byCountry) {
+      if (spend > bestSpend || (spend === bestSpend && impr > bestImpr)) {
+        bestSpend = spend;
+        bestImpr = impr;
+        best = country;
+      }
+    }
+    if (best) out.set(rowKey, best);
+  }
+  return out;
+}
+
+function adGroupRowKey(row: Record<string, unknown>): string {
+  const account_id = String(row.account_id ?? "").trim();
+  const campaign_date = String(row.campaign_date ?? "").trim();
+  const campaign_name = String(row.campaign_name ?? "").trim();
+  const ad_group_name = String(row.ad_group_name ?? "").trim();
+  return `${account_id}\t${campaign_date}\t${campaign_name}\t${ad_group_name}`;
+}
+
 // ─── Data transformers ────────────────────────────────────────────────────────
 
 function toAdGroupRow(
@@ -593,16 +707,19 @@ Deno.serve(async (req: Request) => {
     if (url.searchParams.get("submit_only") === "true") {
       const supabaseSubmit = createClient(supabaseUrl, serviceRoleKey);
       void supabaseSubmit; // unused here
-      const [adGroupReqId2, publisherReqId2] = await Promise.all([
+      const [adGroupReqId2, publisherReqId2, geoReqId2] = await Promise.all([
         submitReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId,
           adGroupReportXml(effectiveAccountId, dateFrom, dateTo)),
         submitReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId,
           publisherReportXml(effectiveAccountId, dateFrom, dateTo)),
+        submitReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId,
+          geographicReportXml(effectiveAccountId, dateFrom, dateTo)),
       ]);
       return new Response(JSON.stringify({
         submit_only: true,
         adGroupReportId: adGroupReqId2,
         publisherReportId: publisherReqId2,
+        geographicReportId: geoReqId2,
       }, null, 2), { headers: { ...CORS, "Content-Type": "application/json" } });
     }
 
@@ -625,46 +742,53 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    // ── Submit both reports concurrently ─────────────────────────────────
+    // ── Submit reports concurrently (ad group, publisher, geographic → country on facts + reference) ──
     console.log("[sync-microsoft-ads] Submitting reports…");
-    const [adGroupReqId, publisherReqId] = await Promise.all([
+    const [adGroupReqId, publisherReqId, geoReqId] = await Promise.all([
       submitReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId,
         adGroupReportXml(effectiveAccountId, dateFrom, dateTo)),
       submitReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId,
         publisherReportXml(effectiveAccountId, dateFrom, dateTo)),
+      submitReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId,
+        geographicReportXml(effectiveAccountId, dateFrom, dateTo)),
     ]);
     console.log(`[sync-microsoft-ads] AdGroup report ID: ${adGroupReqId}`);
     console.log(`[sync-microsoft-ads] Publisher report ID: ${publisherReqId}`);
+    console.log(`[sync-microsoft-ads] Geographic report ID: ${geoReqId}`);
 
-    // ── Wait for both reports ────────────────────────────────────────────
+    // ── Wait for reports ────────────────────────────────────────────────
     console.log("[sync-microsoft-ads] Waiting for reports…");
-    const [adGroupUrl, publisherUrl] = await Promise.all([
+    const [adGroupUrl, publisherUrl, geoUrl] = await Promise.all([
       waitForReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId, adGroupReqId, 110_000),
       waitForReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId, publisherReqId, 110_000),
+      waitForReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId, geoReqId, 110_000),
     ]);
 
     // ── Download and parse ───────────────────────────────────────────────
     // null URL = empty report (no data for this date range) → treat as 0 rows
     console.log("[sync-microsoft-ads] Downloading reports…");
-    const [adGroupCsv, publisherCsv] = await Promise.all([
+    const [adGroupCsv, publisherCsv, geoCsv] = await Promise.all([
       adGroupUrl  ? downloadReportCsv(adGroupUrl)  : Promise.resolve(""),
       publisherUrl ? downloadReportCsv(publisherUrl) : Promise.resolve(""),
+      geoUrl ? downloadReportCsv(geoUrl) : Promise.resolve(""),
     ]);
 
-    console.log(`[sync-microsoft-ads] AdGroup CSV length: ${adGroupCsv.length}, Publisher CSV length: ${publisherCsv.length}`);
+    console.log(`[sync-microsoft-ads] AdGroup CSV length: ${adGroupCsv.length}, Publisher CSV length: ${publisherCsv.length}, Geographic CSV length: ${geoCsv.length}`);
 
     // ── CSV debug mode: return raw CSV for inspection ─────────────────────
     if (url.searchParams.get("csv_debug") === "true") {
       return new Response(JSON.stringify({
         adGroupCsvFirst1000: adGroupCsv.slice(0, 1000),
         publisherCsvFirst1000: publisherCsv.slice(0, 1000),
-        adGroupUrl, publisherUrl,
+        geoCsvFirst1000: geoCsv.slice(0, 1000),
+        adGroupUrl, publisherUrl, geoUrl,
       }, null, 2), { headers: { ...CORS, "Content-Type": "application/json" } });
     }
 
     const adGroupRawRows = parseMsAdsCsv(adGroupCsv);
     const publisherRawRows = parseMsAdsCsv(publisherCsv);
-    console.log(`[sync-microsoft-ads] AdGroup rows: ${adGroupRawRows.length}, Publisher rows: ${publisherRawRows.length}`);
+    const geoRows = parseMsAdsCsv(geoCsv);
+    console.log(`[sync-microsoft-ads] AdGroup rows: ${adGroupRawRows.length}, Publisher rows: ${publisherRawRows.length}, Geo rows: ${geoRows.length}`);
     // Log the real account IDs returned by the API so MS_ADS_ACCOUNT_ID can be verified/corrected
     const realAccountIds = [...new Set(adGroupRawRows.map(r => r["Account ID"] ?? r["AccountId"]).filter(Boolean))];
     console.log(`[sync-microsoft-ads] Account IDs in report: ${JSON.stringify(realAccountIds)}`);
@@ -673,9 +797,18 @@ Deno.serve(async (req: Request) => {
     const dateToStr = dateTo.toISOString().slice(0, 10);
 
     // ── Upsert Ad Group performance (existing rows for the same key are updated; new keys are inserted) ──
-    const adGroupRows = adGroupRawRows
+    const geoCountryByKey = adGroupCountryFromGeoRows(geoRows, effectiveAccountId);
+    const adGroupRows: Record<string, unknown>[] = adGroupRawRows
       .map((r) => toAdGroupRow(r, effectiveAccountId))
-      .filter((r): r is Record<string, unknown> => r !== null);
+      .filter((r): r is Record<string, unknown> => r !== null)
+      .map((row): Record<string, unknown> => {
+        const c = geoCountryByKey.get(adGroupRowKey(row));
+        return { ...row, country: c ?? null };
+      });
+    const adGroupRowsWithCountry = adGroupRows.filter(
+      (r) => r.country != null && String(r.country).trim() !== ""
+    ).length;
+    console.log(`[sync-microsoft-ads] Ad group rows with country from geo: ${adGroupRowsWithCountry} / ${adGroupRows.length}`);
 
     if (adGroupRows.length > 0) {
       const BATCH = 500;
@@ -712,6 +845,42 @@ Deno.serve(async (req: Request) => {
             .insert(newCampaigns);
           if (refErr) console.warn("[sync-microsoft-ads] Reference data insert:", refErr.message);
           else console.log(`[sync-microsoft-ads] Added ${newCampaigns.length} new campaign(s) to reference data.`);
+        }
+      }
+    }
+
+    // Reference rows with country from geographic performance report (runs even if ad group fact rows are empty).
+    const geoRefPairs = referencePairsFromGeoRows(geoRows);
+    if (geoRefPairs.length > 0) {
+      const geoNames = [...new Set(geoRefPairs.map((p) => p.campaign_name))];
+      const { data: existingGeo } = await supabase
+        .from("microsoft_campaigns_reference_data")
+        .select("campaign_name, country")
+        .in("campaign_name", geoNames);
+      const existingGeoSet = new Set(
+        (existingGeo ?? []).map((e) => {
+          const n = String(e.campaign_name ?? "").trim();
+          const c = String(e.country ?? "").trim();
+          return `${n}\t${c}`;
+        })
+      );
+      const newGeoRef = geoRefPairs.filter((p) => !existingGeoSet.has(`${p.campaign_name}\t${p.country}`));
+      if (newGeoRef.length > 0) {
+        const REF_BATCH = 500;
+        let geoRefInsertFailed = false;
+        for (let gi = 0; gi < newGeoRef.length; gi += REF_BATCH) {
+          const chunk = newGeoRef.slice(gi, gi + REF_BATCH);
+          const { error: geoRefErr } = await supabase
+            .from("microsoft_campaigns_reference_data")
+            .insert(chunk);
+          if (geoRefErr) {
+            console.warn("[sync-microsoft-ads] Reference data (country from geo) insert:", geoRefErr.message);
+            geoRefInsertFailed = true;
+            break;
+          }
+        }
+        if (!geoRefInsertFailed) {
+          console.log(`[sync-microsoft-ads] Added ${newGeoRef.length} campaign+country reference row(s) from geographic report.`);
         }
       }
     }

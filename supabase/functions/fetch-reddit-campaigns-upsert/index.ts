@@ -125,6 +125,42 @@ async function loadNames(
   return map;
 }
 
+function pickCountry(r: Record<string, unknown>): string | null {
+  const candidates = ["country", "country_code", "geo_country", "geography_country"];
+  for (const k of candidates) {
+    const v = r[k];
+    if (typeof v === "string" && v.trim().length > 0) return v.trim();
+  }
+  return null;
+}
+
+function pickReferenceCountryByCampaign(
+  rows: { campaign_name: string | null; country: string | null; impressions: number }[],
+): Map<string, string> {
+  const byCampaign = new Map<string, Map<string, number>>();
+  for (const row of rows) {
+    const cn = row.campaign_name?.trim();
+    const co = row.country?.trim();
+    if (!cn || !co) continue;
+    if (!byCampaign.has(cn)) byCampaign.set(cn, new Map());
+    const m = byCampaign.get(cn)!;
+    m.set(co, (m.get(co) ?? 0) + row.impressions);
+  }
+  const out = new Map<string, string>();
+  for (const [campaignName, countryMap] of byCampaign) {
+    let best = "";
+    let bestImp = -1;
+    for (const [country, imp] of countryMap) {
+      if (imp > bestImp) {
+        bestImp = imp;
+        best = country;
+      }
+    }
+    if (best) out.set(campaignName, best);
+  }
+  return out;
+}
+
 function num(v: unknown): number | null {
   if (v == null) return null;
   const n = Number(v);
@@ -145,7 +181,7 @@ function centDiv(v: unknown): number | null {
 function dedupeAdGroupRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
   const map = new Map<string, Record<string, unknown>>();
   for (const r of rows) {
-    const key = `${r.account_id}|${r.campaign_date}|${r.campaign_name ?? ""}|${r.ad_group_name ?? ""}`;
+    const key = `${r.account_id}|${r.campaign_date}|${r.campaign_name ?? ""}|${r.ad_group_name ?? ""}|${r.country ?? ""}`;
     const existing = map.get(key);
     if (!existing) {
       map.set(key, { ...r });
@@ -263,7 +299,7 @@ Deno.serve(async (req: Request) => {
 
     for (const dateStr of dates) {
       try {
-        const rows = await fetchReport(accessToken, accountId, dateStr, ["DATE", "CAMPAIGN_ID", "AD_GROUP_ID"]);
+        const rows = await fetchReport(accessToken, accountId, dateStr, ["DATE", "CAMPAIGN_ID", "AD_GROUP_ID", "COUNTRY"]);
         for (const r of rows) {
           if (!r.date) continue;
           const cid = String(r.campaign_id ?? "");
@@ -272,6 +308,7 @@ Deno.serve(async (req: Request) => {
             account_id: accountId,
             campaign_name: campaignNames[cid] ?? null,
             ad_group_name: adGroupNames[agid] ?? null,
+            country: pickCountry(r),
             campaign_date: String(r.date).slice(0, 10),
             impressions: num(r.impressions),
             clicks: num(r.clicks),
@@ -313,6 +350,29 @@ Deno.serve(async (req: Request) => {
     const dedupedAdGroup = dedupeAdGroupRows(adGroupRows);
     const dedupedPlacement = dedupePlacementRows(placementRows).filter((r) => r.campaign_id);
 
+    // Impression-weighted majority country per campaign_name (used to seed
+    // reddit_campaigns_reference_data.country for new campaigns).
+    const countryByCampaignName = pickReferenceCountryByCampaign(
+      dedupedAdGroup.map((r) => ({
+        campaign_name: (r.campaign_name as string | null) ?? null,
+        country: (r.country as string | null) ?? null,
+        impressions: numOrZero(r.impressions),
+      })),
+    );
+
+    // Clear pre-migration NULL-country rows inside the synced range so the
+    // upsert that follows doesn't double-count alongside the new per-country rows.
+    {
+      const { error: cleanupErr } = await supabase
+        .from("reddit_campaigns_ad_group")
+        .delete()
+        .eq("account_id", accountId)
+        .gte("campaign_date", dateFromStr)
+        .lte("campaign_date", dateToStr)
+        .is("country", null);
+      if (cleanupErr) throw new Error(`reddit_campaigns_ad_group null-country cleanup: ${cleanupErr.message}`);
+    }
+
     const BATCH = 400;
     const stripId = <T extends Record<string, unknown>>(row: T) => {
       const { id: _i, ...rest } = row;
@@ -322,7 +382,7 @@ Deno.serve(async (req: Request) => {
     for (let i = 0; i < dedupedAdGroup.length; i += BATCH) {
       const chunk = dedupedAdGroup.slice(i, i + BATCH).map(stripId);
       const { error } = await supabase.from("reddit_campaigns_ad_group").upsert(chunk, {
-        onConflict: "account_id,campaign_date,campaign_name,ad_group_name",
+        onConflict: "account_id,campaign_date,campaign_name,ad_group_name,country",
         ignoreDuplicates: false,
       });
       if (error) throw new Error(`reddit_campaigns_ad_group upsert: ${error.message}`);
@@ -338,12 +398,42 @@ Deno.serve(async (req: Request) => {
 
     const uniqueCampaignNames = [...new Set(dedupedAdGroup.map((r) => (r.campaign_name as string)?.trim()).filter(Boolean))];
     if (uniqueCampaignNames.length > 0) {
-      const { data: existing } = await supabase.from("reddit_campaigns_reference_data").select("campaign_name").in("campaign_name", uniqueCampaignNames);
-      const existingSet = new Set((existing ?? []).map((r) => (r.campaign_name as string)?.trim()).filter(Boolean));
-      const toInsert = uniqueCampaignNames.filter((n) => !existingSet.has(n)).map((campaign_name) => ({ campaign_name }));
+      const { data: existing } = await supabase
+        .from("reddit_campaigns_reference_data")
+        .select("id,campaign_name,country")
+        .in("campaign_name", uniqueCampaignNames);
+      const existingByName = new Map(
+        (existing ?? [])
+          .map((r) => {
+            const name = (r.campaign_name as string)?.trim();
+            return name ? [name, r] as const : null;
+          })
+          .filter(Boolean) as [string, { id: number; campaign_name: string; country: string | null }][],
+      );
+      const toInsert = uniqueCampaignNames
+        .filter((name) => !existingByName.has(name))
+        .map((campaign_name) => ({
+          campaign_name,
+          country: countryByCampaignName.get(campaign_name) ?? null,
+        }));
       if (toInsert.length > 0) {
         const { error: refErr } = await supabase.from("reddit_campaigns_reference_data").insert(toInsert);
         if (refErr) throw new Error(`reddit_campaigns_reference_data: ${refErr.message}`);
+      }
+      const toUpdate = uniqueCampaignNames
+        .map((campaign_name) => {
+          const existingRow = existingByName.get(campaign_name);
+          const derivedCountry = countryByCampaignName.get(campaign_name)?.trim() || null;
+          const existingCountry = existingRow?.country?.trim() || null;
+          if (!existingRow || existingCountry || !derivedCountry) return null;
+          return { id: existingRow.id, country: derivedCountry };
+        })
+        .filter((r): r is { id: number; country: string } => r != null);
+      if (toUpdate.length > 0) {
+        const { error: updateErr } = await supabase
+          .from("reddit_campaigns_reference_data")
+          .upsert(toUpdate, { onConflict: "id", ignoreDuplicates: false });
+        if (updateErr) throw new Error(`reddit_campaigns_reference_data country update: ${updateErr.message}`);
       }
     }
 

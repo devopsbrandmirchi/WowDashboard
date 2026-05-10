@@ -327,12 +327,11 @@ export function useGoogleAdsData() {
     return campaignsAgg.filter((c) => c.conversions > 0 || c.allConversions > 0).sort((a, b) => b.conversions - a.conversions);
   }, [campaignsAgg]);
 
-  /** Country / Product / Shows from reference data (same logic as Meta) */
+  /** Country from campaigns data; Product / Shows from reference data */
   const countryAgg = useMemo(() => {
     const map = new Map();
     rawCampaigns.forEach((r) => {
-      const ref = getRef(r);
-      const country = (ref && ref.country) ? ref.country : 'Undefined';
+      const country = (r.country && String(r.country).trim()) ? String(r.country).trim() : 'Undefined';
       if (!map.has(country)) map.set(country, { name: country, cost: 0, clicks: 0, impressions: 0, conversions: 0, conversions_value: 0 });
       const a = map.get(country);
       a.cost += costFromMicros(r.cost_micros);
@@ -342,7 +341,7 @@ export function useGoogleAdsData() {
       a.conversions_value += num(r.conversions_value);
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [rawCampaigns, getRef]);
+  }, [rawCampaigns]);
 
   const productAgg = useMemo(() => {
     const map = new Map();

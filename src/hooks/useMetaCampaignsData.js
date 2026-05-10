@@ -91,7 +91,7 @@ const DATE_COL = 'day';
 
 /**
  * facebook_campaigns_reference_data field mapping.
- * Common key with facebook_campaigns_data: campaign_name (used to fetch Country, Product, Shows).
+ * Common key with facebook_campaigns_data: campaign_name (used to fetch Product, Shows; Country prefers facebook_campaigns_data.country).
  */
 const CAMPAIGN_REFERENCE_FIELDS = 'id,campaign_id,campaign_name,country,product_type,showname';
 
@@ -127,6 +127,7 @@ function normalizeRow(r) {
     day: r.day,
     platform: r.platform ?? '',
     device_platform: r.device_platform ?? '',
+    country: (r.country != null && String(r.country).trim() !== '') ? String(r.country).trim() : '',
     impressions: num(r.impressions),
     reach: num(r.reach),
     clicks: num(r.clicks_all),
@@ -204,7 +205,7 @@ export function useMetaCampaignsData() {
       /** * OPTIMIZATION 2: Column Whitelisting
        * Prevents transferring bloated JSON configuration payloads native to Facebook APIs 
        */
-      const DATA_COLUMNS = 'account_id, delivery_status, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, placement, day, platform, device_platform, impressions, reach, clicks_all, amount_spent_usd, purchases, meta_purchases, purchases_value, inapp_purchases_value, direct_website_purchases_value';
+      const DATA_COLUMNS = 'account_id, delivery_status, campaign_id, campaign_name, adset_id, adset_name, ad_id, ad_name, placement, day, platform, device_platform, country, impressions, reach, clicks_all, amount_spent_usd, purchases, meta_purchases, purchases_value, inapp_purchases_value, direct_website_purchases_value';
 
       const fetches = [
         fetchAllRowsConcurrently(buildDataQuery, DATA_COLUMNS)
@@ -248,7 +249,7 @@ export function useMetaCampaignsData() {
 
   /**
    * Map from facebook_campaigns_reference_data keyed only by campaign_name (common key with facebook_campaigns_data).
-   * Used to fetch Country, Product, and Shows by matching campaign_name between the two tables.
+   * Used for Product and Shows (and Country fallback when data.country is empty).
    */
   const campaignRefMap = useMemo(() => {
     const m = new Map();
@@ -293,7 +294,7 @@ export function useMetaCampaignsData() {
     return out;
   }, [rawRows, campaignRefMap, filters.productType]);
 
-  /** Lookup reference by campaign_name only (common key between facebook_campaigns_data and facebook_campaigns_reference_data for Country, Product, Shows). */
+  /** Lookup reference by campaign_name only (common key for Product, Shows; Country uses data row when set). */
   const getRef = useCallback((rowOrCampaignName) => {
     const campaignName = typeof rowOrCampaignName === 'string' ? rowOrCampaignName : (rowOrCampaignName && rowOrCampaignName.campaign_name);
     const nameKey = (campaignName || '').trim();
@@ -374,12 +375,14 @@ export function useMetaCampaignsData() {
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
   }, [filteredRows]);
 
-  /** Country aggregation: same logic as Reddit — reference by campaign_name, fallback "Unknown". */
+  /** Country aggregation: prefer facebook_campaigns_data.country; else reference by campaign_name; else "Unknown". */
   const countries = useMemo(() => {
     const map = new Map();
     filteredRows.forEach(r => {
+      const fromData = (r.country && String(r.country).trim()) ? String(r.country).trim() : '';
       const ref = getRef(r.campaign_name);
-      const country = (ref && ref.country) ? ref.country : 'Unknown';
+      const fromRef = (ref && ref.country) ? String(ref.country).trim() : '';
+      const country = fromData || fromRef || 'Unknown';
       if (!map.has(country)) map.set(country, { key: country, name: country, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
       const a = map.get(country);
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;

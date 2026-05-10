@@ -119,6 +119,145 @@ function rowsHaveAnyPlacement(rows: TikTokReportRow[]): boolean {
   return false;
 }
 
+/** Country breakdown for reference table (ad/day/country). */
+const DIM_AD_COUNTRY = ["stat_time_day", "ad_id", "country_code"];
+
+function pickCountryCode(dimensions: Record<string, unknown>): string | null {
+  const c =
+    str(dimensions.country_code) ??
+    str(dimensions.country) ??
+    str(dimensions.geo_country_code) ??
+    str(dimensions.stat_country_code);
+  if (!c) return null;
+  const lower = c.toLowerCase();
+  if (lower === "unknown" || lower === "other") return null;
+  return c;
+}
+
+/** Impressions-weighted dominant country per campaign_name (aligned with Facebook pickReferenceCountries). */
+function pickReferenceCountryByCampaign(
+  rows: TikTokReportRow[],
+  enrich: Map<string, AdEnrich>
+): Map<string, string> {
+  const agg = new Map<string, Map<string, number>>();
+  for (const item of rows) {
+    const d = item.dimensions ?? {};
+    const m = item.metrics ?? {};
+    const adId = str(d.ad_id);
+    const campaignName = (str(d.campaign_name) ?? (adId ? enrich.get(adId)?.campaign_name : null))?.trim();
+    if (!campaignName) continue;
+    const country = pickCountryCode(d);
+    if (!country) continue;
+    const impressions = int(m.impressions) ?? 0;
+    if (!agg.has(campaignName)) agg.set(campaignName, new Map());
+    const inner = agg.get(campaignName)!;
+    inner.set(country, (inner.get(country) ?? 0) + impressions);
+  }
+  const out = new Map<string, string>();
+  for (const [campaignName, countryMap] of agg) {
+    let bestC = "";
+    let bestI = -1;
+    for (const [c, imp] of countryMap) {
+      if (imp > bestI) {
+        bestI = imp;
+        bestC = c;
+      }
+    }
+    if (bestC) out.set(campaignName, bestC);
+  }
+  return out;
+}
+
+/** Impressions-weighted dominant country per (ad_id, day) for tiktok_campaigns_data.country. */
+function pickDominantCountryByAdAndDate(rows: TikTokReportRow[]): Map<string, string> {
+  const agg = new Map<string, Map<string, number>>();
+  for (const item of rows) {
+    const d = item.dimensions ?? {};
+    const m = item.metrics ?? {};
+    const adId = str(d.ad_id);
+    const date = parseStatDay(d.stat_time_day);
+    if (!adId || !date) continue;
+    const country = pickCountryCode(d);
+    if (!country) continue;
+    const impressions = int(m.impressions) ?? 0;
+    const key = `${adId}\0${date}`;
+    if (!agg.has(key)) agg.set(key, new Map());
+    const inner = agg.get(key)!;
+    inner.set(country, (inner.get(country) ?? 0) + impressions);
+  }
+  const out = new Map<string, string>();
+  for (const [key, countryMap] of agg) {
+    let bestC = "";
+    let bestI = -1;
+    for (const [c, imp] of countryMap) {
+      if (imp > bestI) {
+        bestI = imp;
+        bestC = c;
+      }
+    }
+    if (bestC) out.set(key, bestC);
+  }
+  return out;
+}
+
+async function fetchTikTokAdCountryReportPages(
+  apiBase: string,
+  token: string,
+  advertiserId: string,
+  startDate: string,
+  endDate: string
+): Promise<TikTokReportRow[]> {
+  const out: TikTokReportRow[] = [];
+  let page = 1;
+  const pageSize = 1000;
+  let totalPage = 1;
+
+  const fetchPage = async (): Promise<TikTokReportResponse> => {
+    const u = new URL(`${apiBase.replace(/\/$/, "")}/report/integrated/get/`);
+    u.searchParams.set("advertiser_id", advertiserId);
+    u.searchParams.set("service_type", "AUCTION");
+    u.searchParams.set("report_type", "BASIC");
+    u.searchParams.set("data_level", "AUCTION_AD");
+    u.searchParams.set("start_date", startDate);
+    u.searchParams.set("end_date", endDate);
+    u.searchParams.set("page", String(page));
+    u.searchParams.set("page_size", String(pageSize));
+    u.searchParams.set("dimensions", JSON.stringify(DIM_AD_COUNTRY));
+    u.searchParams.set("metrics", JSON.stringify(METRICS_MIN));
+    const res = await fetch(u.toString(), { headers: { "Access-Token": token } });
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as TikTokReportResponse;
+    } catch {
+      throw new Error(`TikTok country report: non-JSON ${res.status} ${text.slice(0, 200)}`);
+    }
+  };
+
+  let json = await fetchPage();
+  if (json.code !== 0) {
+    const msg = json.message || "";
+    if (json.code === 41000 && /banned country list|client ip address/i.test(msg)) {
+      console.warn(LOG, "TikTok IP region blocked; skipping reference country", msg.slice(0, 120));
+      return [];
+    }
+    console.warn(LOG, "TikTok country report unavailable:", json.code, msg.slice(0, 200));
+    return [];
+  }
+
+  do {
+    if (page > 1) json = await fetchPage();
+    if (json.code !== 0) {
+      console.warn(LOG, "TikTok country report page:", json.message);
+      break;
+    }
+    out.push(...(json.data?.list ?? []));
+    totalPage = json.data?.page_info?.total_page ?? 1;
+    page++;
+  } while (page <= totalPage);
+
+  return out;
+}
+
 interface AdEnrich {
   campaign_name: string | null;
   adgroup_name: string | null;
@@ -459,6 +598,24 @@ Deno.serve(async (req: Request) => {
     const rawList = await fetchTikTokReportPages(apiBase, token, advertiserId, dateFromStr, dateToStr, true);
     const adIds = rawList.map((r) => str(r.dimensions?.ad_id)).filter((x): x is string => !!x);
     const enrich = await fetchAdEnrichment(apiBase, token, advertiserId, adIds);
+
+    let countryRows: TikTokReportRow[] = [];
+    let countryByCampaignName = new Map<string, string>();
+    try {
+      countryRows = await fetchTikTokAdCountryReportPages(
+        apiBase,
+        token,
+        advertiserId,
+        dateFromStr,
+        dateToStr
+      );
+      countryByCampaignName = pickReferenceCountryByCampaign(countryRows, enrich);
+      if (countryByCampaignName.size > 0) {
+        console.log(LOG, "reference countries derived for", countryByCampaignName.size, "campaign(s)");
+      }
+    } catch (e) {
+      console.warn(LOG, "country report for reference_data", e);
+    }
     const rows = rawList
       .map((item) => rowToDb(item, currency, enrich))
       .filter((r): r is Record<string, unknown> => r != null);
@@ -470,27 +627,33 @@ Deno.serve(async (req: Request) => {
     }
     const uniqueRows = [...dedupe.values()];
 
+    const countryByAdDate = pickDominantCountryByAdAndDate(countryRows);
+    if (countryByAdDate.size > 0) {
+      console.log(LOG, "fact countries for", countryByAdDate.size, "ad-day key(s)");
+    }
+    for (const r of uniqueRows) {
+      const adId = str(r.ad_id as unknown);
+      const dateRaw = r.date;
+      const date =
+        typeof dateRaw === "string"
+          ? dateRaw.slice(0, 10)
+          : dateRaw != null
+          ? String(dateRaw).slice(0, 10)
+          : null;
+      if (adId && date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        const c = countryByAdDate.get(`${adId}\0${date}`);
+        if (c) r.country = c;
+      }
+    }
+
     console.log(LOG, "report", rawList.length, "unique", uniqueRows.length);
 
     const supabase = createClient(getEnv("SUPABASE_URL"), getEnv("SUPABASE_SERVICE_ROLE_KEY"));
-
-    const { error: delErr } = await supabase
-      .from("tiktok_campaigns_data")
-      .delete()
-      .gte("date", dateFromStr)
-      .lte("date", dateToStr);
-    if (delErr) throw new Error(`tiktok_campaigns_data delete: ${delErr.message}`);
-
     const BATCH = 500;
     const stripId = <T extends Record<string, unknown>>(row: T) => {
       const { id: _i, ...rest } = row;
       return rest;
     };
-    for (let i = 0; i < uniqueRows.length; i += BATCH) {
-      const chunk = uniqueRows.slice(i, i + BATCH).map(stripId);
-      const { error } = await supabase.from("tiktok_campaigns_data").insert(chunk);
-      if (error) throw new Error(`tiktok_campaigns_data insert: ${error.message}`);
-    }
 
     const uniqueCampaignNames = [
       ...new Set(uniqueRows.map((r) => (r.campaign_name as string)?.trim()).filter(Boolean)),
@@ -498,12 +661,22 @@ Deno.serve(async (req: Request) => {
     if (uniqueCampaignNames.length > 0) {
       const { data: existing } = await supabase
         .from("tiktok_campaigns_reference_data")
-        .select("campaign_name")
+        .select("id,campaign_name,country")
         .in("campaign_name", uniqueCampaignNames);
-      const existingSet = new Set((existing ?? []).map((r) => (r.campaign_name as string)?.trim()).filter(Boolean));
+      const existingByName = new Map(
+        (existing ?? [])
+          .map((r) => {
+            const name = (r.campaign_name as string)?.trim();
+            return name ? [name, r] as const : null;
+          })
+          .filter(Boolean) as [string, { id: number; campaign_name: string; country: string | null }][],
+      );
       const toInsert = uniqueCampaignNames
-        .filter((n) => !existingSet.has(n))
-        .map((campaign_name) => ({ campaign_name }));
+        .filter((n) => !existingByName.has(n))
+        .map((campaign_name) => ({
+          campaign_name,
+          country: countryByCampaignName.get(campaign_name) ?? null,
+        }));
       if (toInsert.length > 0) {
         const { error: refErr } = await supabase.from("tiktok_campaigns_reference_data").insert(toInsert);
         if (refErr) {
@@ -515,6 +688,64 @@ Deno.serve(async (req: Request) => {
         }
         console.log(LOG, "Inserted", toInsert.length, "reference campaigns");
       }
+      const toUpdate = uniqueCampaignNames
+        .map((campaign_name) => {
+          const existingRow = existingByName.get(campaign_name);
+          const derivedCountry = countryByCampaignName.get(campaign_name)?.trim() || null;
+          const existingCountry = existingRow?.country?.trim() || null;
+          if (!existingRow || existingCountry || !derivedCountry) return null;
+          return { id: existingRow.id, country: derivedCountry };
+        })
+        .filter((r): r is { id: number; country: string } => r != null);
+      if (toUpdate.length > 0) {
+        const { error: updateErr } = await supabase
+          .from("tiktok_campaigns_reference_data")
+          .upsert(toUpdate, { onConflict: "id", ignoreDuplicates: false });
+        if (updateErr) throw new Error(`tiktok_campaigns_reference_data country update: ${updateErr.message}`);
+        console.log(LOG, "Updated country on", toUpdate.length, "reference row(s)");
+      }
+
+      const { data: refForFact, error: refForFactErr } = await supabase
+        .from("tiktok_campaigns_reference_data")
+        .select("campaign_name,country")
+        .in("campaign_name", uniqueCampaignNames);
+      if (refForFactErr) {
+        console.warn(LOG, "reference fetch for fact country", refForFactErr.message);
+      } else {
+        const refCountryByCampaign = new Map<string, string>();
+        for (const row of refForFact ?? []) {
+          const n = (row.campaign_name as string)?.trim();
+          const c = (row.country as string)?.trim();
+          if (!n || !c) continue;
+          if (!refCountryByCampaign.has(n)) refCountryByCampaign.set(n, c);
+        }
+        let filledFromRef = 0;
+        for (const r of uniqueRows) {
+          if (str(r.country as unknown)) continue;
+          const name = ((r.campaign_name as string) || "").trim();
+          const c = name ? refCountryByCampaign.get(name) : undefined;
+          if (c) {
+            r.country = c;
+            filledFromRef++;
+          }
+        }
+        if (filledFromRef > 0) {
+          console.log(LOG, "fact country from tiktok_campaigns_reference_data", filledFromRef, "row(s)");
+        }
+      }
+    }
+
+    const { error: delErr } = await supabase
+      .from("tiktok_campaigns_data")
+      .delete()
+      .gte("date", dateFromStr)
+      .lte("date", dateToStr);
+    if (delErr) throw new Error(`tiktok_campaigns_data delete: ${delErr.message}`);
+
+    for (let i = 0; i < uniqueRows.length; i += BATCH) {
+      const chunk = uniqueRows.slice(i, i + BATCH).map(stripId);
+      const { error } = await supabase.from("tiktok_campaigns_data").insert(chunk);
+      if (error) throw new Error(`tiktok_campaigns_data insert: ${error.message}`);
     }
 
     const result = {
