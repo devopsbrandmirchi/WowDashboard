@@ -125,6 +125,34 @@ async function loadNames(
   return map;
 }
 
+async function loadAdGroupsMeta(
+  accessToken: string,
+  customerId: string,
+): Promise<{ names: Record<string, string>; campaignIdByAdGroupId: Record<string, string> }> {
+  const names: Record<string, string> = {};
+  const campaignIdByAdGroupId: Record<string, string> = {};
+  let nextUrl: string | null = `${API_BASE}/ad_accounts/${customerId}/ad_groups?page.size=500`;
+  while (nextUrl) {
+    const res = await fetch(nextUrl, {
+      headers: { "Authorization": `Bearer ${accessToken}`, "User-Agent": UA },
+    });
+    if (res.status !== 200) break;
+    const json = (await res.json()) as {
+      data?: Array<{ id?: string; name?: string; campaign_id?: string; campaign?: { id?: string } }>;
+      pagination?: { next_url?: string };
+    };
+    for (const item of json.data ?? []) {
+      const id = item.id;
+      if (!id) continue;
+      if (typeof item.name === "string" && item.name) names[id] = item.name;
+      const cid = item.campaign_id ?? item.campaign?.id;
+      if (typeof cid === "string" && cid) campaignIdByAdGroupId[id] = cid;
+    }
+    nextUrl = json.pagination?.next_url ?? null;
+  }
+  return { names, campaignIdByAdGroupId };
+}
+
 function pickCountry(r: Record<string, unknown>): string | null {
   const candidates = ["country", "country_code", "geo_country", "geography_country"];
   for (const k of candidates) {
@@ -287,10 +315,12 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(getEnv("SUPABASE_URL"), getEnv("SUPABASE_SERVICE_ROLE_KEY"));
     const accessToken = await getAccessToken();
 
-    const [campaignNames, adGroupNames] = await Promise.all([
+    const [campaignNames, adGroupMeta] = await Promise.all([
       loadNames(accessToken, accountId, "campaigns"),
-      loadNames(accessToken, accountId, "ad_groups"),
+      loadAdGroupsMeta(accessToken, accountId),
     ]);
+    const adGroupNames = adGroupMeta.names;
+    const adGroupCampaignId = adGroupMeta.campaignIdByAdGroupId;
     console.log(LOG, "names", Object.keys(campaignNames).length, Object.keys(adGroupNames).length);
 
     const dates = eachDateInRange(dateFromStr, dateToStr);
@@ -299,11 +329,11 @@ Deno.serve(async (req: Request) => {
 
     for (const dateStr of dates) {
       try {
-        const rows = await fetchReport(accessToken, accountId, dateStr, ["DATE", "CAMPAIGN_ID", "AD_GROUP_ID", "COUNTRY"]);
+        const rows = await fetchReport(accessToken, accountId, dateStr, ["DATE", "AD_GROUP_ID", "COUNTRY"]);
         for (const r of rows) {
           if (!r.date) continue;
-          const cid = String(r.campaign_id ?? "");
           const agid = String(r.ad_group_id ?? "");
+          const cid = adGroupCampaignId[agid] ?? String(r.campaign_id ?? "");
           adGroupRows.push({
             account_id: accountId,
             campaign_name: campaignNames[cid] ?? null,
