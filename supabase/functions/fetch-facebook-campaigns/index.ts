@@ -117,6 +117,66 @@ async function readGraphFailure(res: Response, context: string): Promise<never> 
   throw new Error(`${context}: ${res.status} ${t}`);
 }
 
+/** Meta throttling: https://developers.facebook.com/docs/marketing-api/insights/best-practices/#insightscallload */
+const GRAPH_PAGE_GAP_MS = 450;
+const GRAPH_RATE_LIMIT_MAX_RETRIES = 10;
+const GRAPH_RATE_LIMIT_BASE_MS = 2_000;
+const GRAPH_RATE_LIMIT_CAP_MS = 90_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseFacebookGraphError(
+  bodyText: string
+): { code: number | null; isTransient: boolean } | null {
+  try {
+    const j = JSON.parse(bodyText) as { error?: { code?: unknown; is_transient?: unknown } };
+    const e = j.error;
+    if (!e || typeof e !== "object") return null;
+    const code = typeof e.code === "number" && Number.isFinite(e.code) ? e.code : null;
+    const isTransient = e.is_transient === true;
+    return { code, isTransient };
+  } catch {
+    return null;
+  }
+}
+
+function isRetryableMetaRateLimit(status: number, bodyText: string): boolean {
+  if (status === 429) return true;
+  const p = parseFacebookGraphError(bodyText);
+  if (!p) return false;
+  // 4 = application request limit; 17 = user-level throttling; 80004 = custom audience / heavy ops
+  if (p.code === 4 || p.code === 17 || p.code === 80004) return true;
+  return false;
+}
+
+/** Fetch one Graph URL; retries on application/user rate limits (OAuthException 4, etc.). */
+async function graphFetchWithRateLimitRetry(url: string, context: string): Promise<Response> {
+  for (let attempt = 0; attempt <= GRAPH_RATE_LIMIT_MAX_RETRIES; attempt++) {
+    const res = await fetch(url);
+    if (res.ok) return res;
+    const bodyText = await res.text();
+    throwIfFacebookAuthError(res.status, bodyText, context);
+    const retryable = attempt < GRAPH_RATE_LIMIT_MAX_RETRIES && isRetryableMetaRateLimit(res.status, bodyText);
+    if (retryable) {
+      const exp = Math.min(
+        GRAPH_RATE_LIMIT_CAP_MS,
+        GRAPH_RATE_LIMIT_BASE_MS * 2 ** attempt
+      );
+      const jitter = Math.floor(Math.random() * 750);
+      const waitMs = exp + jitter;
+      console.warn(
+        `[fetch-facebook-campaigns] ${context}: ${res.status} rate limit, waiting ${waitMs}ms (attempt ${attempt + 1}/${GRAPH_RATE_LIMIT_MAX_RETRIES})`
+      );
+      await sleep(waitMs);
+      continue;
+    }
+    throw new Error(`${context}: ${res.status} ${bodyText}`);
+  }
+  throw new Error(`${context}: exhausted rate-limit retries`);
+}
+
 async function graphGet<T = unknown>(token: string, path: string, params: Record<string, string>): Promise<T> {
   const base = `https://graph.facebook.com/${GRAPH_VERSION}`;
   const pathClean = path.startsWith("/") ? path : `/${path}`;
@@ -136,12 +196,13 @@ async function graphGetAll<T>(
 ): Promise<T[]> {
   const out: T[] = [];
   let nextUrl: string | null = `${path}?${new URLSearchParams(params)}`;
+  let page = 0;
 
   while (nextUrl) {
+    if (page++ > 0) await sleep(GRAPH_PAGE_GAP_MS);
     const fullUrl = nextUrl.startsWith("http") ? nextUrl : `https://graph.facebook.com/${GRAPH_VERSION}${nextUrl}`;
     const url = fullUrl.includes("access_token=") ? fullUrl : `${fullUrl}${fullUrl.includes("?") ? "&" : "?"}access_token=${token}`;
-    const res = await fetch(url);
-    if (!res.ok) await readGraphFailure(res, "Graph API pagination");
+    const res = await graphFetchWithRateLimitRetry(url, "Graph API pagination");
     const json = (await res.json()) as { data?: T[]; paging?: { next?: string } };
     const data = extractData(json);
     out.push(...data);
@@ -333,6 +394,7 @@ Deno.serve(async (req: Request) => {
       },
       (j) => j.data ?? []
     );
+    await sleep(600);
     const countryInsights = await graphGetAll<CampaignCountryInsightRow>(
       graphToken,
       `/${adAccountId}/insights`,
