@@ -576,6 +576,14 @@ export function SettingsPage() {
   }, [location.state, navigate]);
 
   useEffect(() => {
+    const nav = location.state?.settingsNav;
+    if (!nav || permissionsLoading) return;
+    const allowed = SETTINGS_NAV_BASE.some((item) => item.id === nav);
+    if (allowed) setActiveNav(nav);
+    navigate('.', { replace: true, state: {} });
+  }, [location.state, navigate, permissionsLoading]);
+
+  useEffect(() => {
     if (!location.state?.openDatingAppImport || permissionsLoading) return;
     if (canAccessSidebar('subscriptions-dating-apps')) {
       setActiveNav('dating-app-data');

@@ -79,7 +79,7 @@ export function useUserPermissions() {
       return true;
     }
     if (isLimitedRole) {
-      return !['users', 'settings', 'google-campaigns-reference', 'reddit-campaigns-reference', 'tiktok-campaigns-reference', 'facebook-campaigns-reference', 'facebook-adset-reference', 'microsoft-campaigns-reference'].includes(navId);
+      return !['users', 'settings', 'maintenance', 'google-campaigns-reference', 'reddit-campaigns-reference', 'tiktok-campaigns-reference', 'facebook-campaigns-reference', 'facebook-adset-reference', 'microsoft-campaigns-reference'].includes(navId);
     }
     if (permissions.length > 0) {
       if (permissions.includes(key)) return true;

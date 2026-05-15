@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import { useApp } from './context/AppContext';
 import { useUserPermissions } from './hooks/useUserPermissions';
@@ -29,8 +29,10 @@ import { VimeoAnalyticsPage } from './pages/VimeoAnalyticsPage';
 import { SubscriberIntelligencePage } from './pages/SubscriberIntelligencePage';
 import { DatingAppSubscriptionDataPage } from './pages/DatingAppSubscriptionDataPage';
 import { HubspotEmailMarketingPage } from './pages/subscriptions/HubspotEmailMarketingPage';
+import { MaintenancePage } from './pages/MaintenancePage';
 import { invokeEdgeFunction } from './lib/supabase.js';
 import { getFacebookOAuthRedirectUri } from './lib/facebookOAuth.js';
+import { MAINTENANCE_ONLY_MODE } from './config/maintenance.js';
 
 const PATH_TO_PAGE = {
   '/': 'dashboard',
@@ -53,6 +55,7 @@ const PATH_TO_PAGE = {
   '/settings/facebook-campaigns-reference': 'facebook-campaigns-reference',
   '/settings/facebook-adset-reference': 'facebook-adset-reference',
   '/settings/microsoft-campaigns-reference': 'microsoft-campaigns-reference',
+  '/maintenance': 'maintenance',
   '/profile': 'profile',
 };
 
@@ -73,6 +76,7 @@ const PAGE_TITLES = {
   'facebook-campaigns-reference': 'Facebook Campaigns Reference',
   'facebook-adset-reference': 'Facebook Adset Reference',
   'microsoft-campaigns-reference': 'Microsoft Campaigns Reference',
+  'maintenance': 'System Maintenance',
   'profile': 'Profile',
   'subscriptions-analytics': 'Subscription Analytics',
   'subscriptions-subscribers': 'Subscriber Intelligence',
@@ -118,8 +122,30 @@ function CurrentPage({ forcePage }) {
   if (page === 'subscriptions-subscribers') return <SubscriberIntelligencePage />;
   if (page === 'subscriptions-dating-apps') return <DatingAppSubscriptionDataPage />;
   if (page === 'subscriptions-hubspot-email') return <HubspotEmailMarketingPage />;
+  if (page === 'maintenance') return <MaintenancePage />;
 
   return <DashboardPage />;
+}
+
+function MaintenanceOnlyShell() {
+  const location = useLocation();
+  const { branding } = useApp();
+
+  useEffect(() => {
+    const appName = branding?.agencyName || 'Digital Analytics Dashboard';
+    document.title = `System Maintenance — ${appName}`;
+  }, [branding?.agencyName]);
+
+  if (location.pathname !== '/') {
+    return <Navigate to="/" replace />;
+  }
+
+  return (
+    <div className="maintenance-landing-shell">
+      <MaintenancePage />
+      <NotificationContainer />
+    </div>
+  );
 }
 
 function AppContent({ forcePage }) {
@@ -209,6 +235,8 @@ function AppContent({ forcePage }) {
       navigate('/', { replace: true });
     } else if (path === '/settings/microsoft-campaigns-reference' && !canAccessSidebar('microsoft-campaigns-reference')) {
       navigate('/', { replace: true });
+    } else if (path === '/maintenance' && !canAccessSidebar('maintenance')) {
+      navigate('/', { replace: true });
     }
   }, [location.pathname, canAccessSidebar, navigate, permissionsLoading]);
 
@@ -230,7 +258,7 @@ export default function App() {
   const [authView, setAuthView] = useState('login'); // 'login' | 'signup'
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && !MAINTENANCE_ONLY_MODE) {
       showNotification('Welcome to your Agency Dashboard!');
     }
   }, [isAuthenticated, showNotification]);
@@ -256,6 +284,15 @@ export default function App() {
     );
   }
 
+  if (MAINTENANCE_ONLY_MODE) {
+    return (
+      <Routes>
+        <Route path="/" element={<MaintenanceOnlyShell />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
+  }
+
   return (
     <>
       <Routes>
@@ -271,6 +308,7 @@ export default function App() {
         <Route path="/settings/facebook-adset-reference" element={<AppContent forcePage="facebook-adset-reference" />} />
         <Route path="/settings/microsoft-campaigns-reference" element={<AppContent forcePage="microsoft-campaigns-reference" />} />
         <Route path="/settings" element={<AppContent forcePage="settings" />} />
+        <Route path="/maintenance" element={<AppContent forcePage="maintenance" />} />
         <Route path="*" element={<AppContent />} />
       </Routes>
     </>

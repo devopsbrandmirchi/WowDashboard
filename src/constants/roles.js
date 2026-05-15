@@ -72,6 +72,7 @@ export const ALL_PERMISSION_KEYS = {
     'sidebar:subscriptions-dating-apps',
     'sidebar:subscriptions-hubspot-email',
     'sidebar:settings',
+    'sidebar:maintenance',
     'sidebar:roles-permissions',
     'sidebar:users',
     'sidebar:google-campaigns-reference',

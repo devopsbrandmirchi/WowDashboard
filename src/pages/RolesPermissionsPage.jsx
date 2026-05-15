@@ -14,6 +14,7 @@ function permissionKeyToLabel(key) {
     platformdevice: 'Platform device',
     'combined-reporting': 'Combined reporting',
     'roles-permissions': 'Roles & permissions',
+    maintenance: 'System maintenance',
     'subscriptions-analytics': 'Subscription analytics',
     'subscriptions-subscribers': 'Subscriber intelligence',
     'subscriptions-dating-apps': 'Dating app subscription data',

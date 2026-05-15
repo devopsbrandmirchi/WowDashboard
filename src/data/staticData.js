@@ -107,6 +107,7 @@ export const PAGE_TITLES = {
   'tiktok-ads': 'TikTok Ads Performance',
   'reddit-ads': 'Reddit Ads Performance',
   settings: 'White-Label Settings',
+  maintenance: 'System Maintenance',
   'roles-permissions': 'Roles & Permissions',
   users: 'Users',
   'google-campaigns-reference': 'Google Campaigns Reference',
