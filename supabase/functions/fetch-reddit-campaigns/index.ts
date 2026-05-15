@@ -130,72 +130,6 @@ async function loadNames(
   return map;
 }
 
-/** Ad group names and parent campaign_id (Reddit reports allow at most 3 breakdowns). */
-async function loadAdGroupsMeta(
-  accessToken: string,
-  customerId: string,
-): Promise<{ names: Record<string, string>; campaignIdByAdGroupId: Record<string, string> }> {
-  const names: Record<string, string> = {};
-  const campaignIdByAdGroupId: Record<string, string> = {};
-  let nextUrl: string | null = `${API_BASE}/ad_accounts/${customerId}/ad_groups?page.size=500`;
-  while (nextUrl) {
-    const res = await fetch(nextUrl, {
-      headers: { "Authorization": `Bearer ${accessToken}`, "User-Agent": UA },
-    });
-    if (res.status !== 200) break;
-    const json = (await res.json()) as {
-      data?: Array<{ id?: string; name?: string; campaign_id?: string; campaign?: { id?: string } }>;
-      pagination?: { next_url?: string };
-    };
-    for (const item of json.data ?? []) {
-      const id = item.id;
-      if (!id) continue;
-      if (typeof item.name === "string" && item.name) names[id] = item.name;
-      const cid = item.campaign_id ?? item.campaign?.id;
-      if (typeof cid === "string" && cid) campaignIdByAdGroupId[id] = cid;
-    }
-    nextUrl = json.pagination?.next_url ?? null;
-  }
-  return { names, campaignIdByAdGroupId };
-}
-
-function pickCountry(r: Record<string, unknown>): string | null {
-  const candidates = ["country", "country_code", "geo_country", "geography_country"];
-  for (const k of candidates) {
-    const v = r[k];
-    if (typeof v === "string" && v.trim().length > 0) return v.trim();
-  }
-  return null;
-}
-
-/** One country per campaign_name: highest total impressions in this sync window. */
-function pickReferenceCountryByCampaign(
-  rows: { campaign_name: string | null; country: string | null; impressions: number }[],
-): Map<string, string> {
-  const byCampaign = new Map<string, Map<string, number>>();
-  for (const row of rows) {
-    const cn = row.campaign_name?.trim();
-    const co = row.country?.trim();
-    if (!cn || !co) continue;
-    if (!byCampaign.has(cn)) byCampaign.set(cn, new Map());
-    const m = byCampaign.get(cn)!;
-    m.set(co, (m.get(co) ?? 0) + row.impressions);
-  }
-  const out = new Map<string, string>();
-  for (const [campaignName, countryMap] of byCampaign) {
-    let best = "";
-    let bestImp = -1;
-    for (const [country, imp] of countryMap) {
-      if (imp > bestImp) {
-        bestImp = imp;
-        best = country;
-      }
-    }
-    if (best) out.set(campaignName, best);
-  }
-  return out;
-}
-
 function num(v: unknown): number | null {
   if (v == null) return null;
   const n = Number(v);
@@ -214,11 +148,11 @@ function centDiv(v: unknown): number | null {
   return n != null ? Math.round(n / 100 * 100) / 100 : null;
 }
 
-/** Dedupe ad_group rows by (account_id, campaign_date, campaign_name, ad_group_name, country), summing metrics. */
+/** Dedupe ad_group rows by (account_id, campaign_date, campaign_name, ad_group_name), summing metrics. */
 function dedupeAdGroupRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
   const map = new Map<string, Record<string, unknown>>();
   for (const r of rows) {
-    const key = `${r.account_id ?? ""}|${r.campaign_date}|${r.campaign_name ?? ""}|${r.ad_group_name ?? ""}|${r.country ?? ""}`;
+    const key = `${r.account_id ?? ""}|${r.campaign_date}|${r.campaign_name ?? ""}|${r.ad_group_name ?? ""}`;
     const existing = map.get(key);
     if (!existing) {
       map.set(key, { ...r });
@@ -282,12 +216,10 @@ Deno.serve(async (req: Request) => {
     const dateFromStr = dateFrom.toISOString().slice(0, 10);
     const dateToStr = dateTo.toISOString().slice(0, 10);
 
-    const [campaignNames, adGroupMeta] = await Promise.all([
+    const [campaignNames, adGroupNames] = await Promise.all([
       loadNames(accessToken, accountId, "campaigns"),
-      loadAdGroupsMeta(accessToken, accountId),
+      loadNames(accessToken, accountId, "ad_groups"),
     ]);
-    const adGroupNames = adGroupMeta.names;
-    const adGroupCampaignId = adGroupMeta.campaignIdByAdGroupId;
     console.log("[fetch-reddit-campaigns] Loaded", Object.keys(campaignNames).length, "campaigns,", Object.keys(adGroupNames).length, "ad_groups");
 
     const dates: string[] = [];
@@ -303,16 +235,13 @@ Deno.serve(async (req: Request) => {
 
     for (const dateStr of dates) {
       try {
-        const rows = await fetchReport(accessToken, accountId, dateStr, ["DATE", "AD_GROUP_ID", "COUNTRY"]);
+        const rows = await fetchReport(accessToken, accountId, dateStr, ["DATE", "CAMPAIGN_ID", "AD_GROUP_ID"]);
         for (const r of rows) {
           if (!r.date) continue;
-          const agid = String(r.ad_group_id ?? "");
-          const cid = adGroupCampaignId[agid] ?? String(r.campaign_id ?? "");
           adGroupRows.push({
             account_id: accountId,
-            campaign_name: campaignNames[cid] ?? null,
-            ad_group_name: adGroupNames[agid] ?? null,
-            country: pickCountry(r),
+            campaign_name: campaignNames[String(r.campaign_id)] ?? null,
+            ad_group_name: adGroupNames[String(r.ad_group_id)] ?? null,
             campaign_date: String(r.date).slice(0, 10),
             impressions: num(r.impressions),
             clicks: num(r.clicks),
@@ -357,16 +286,6 @@ Deno.serve(async (req: Request) => {
     const dedupedAdGroup = dedupeAdGroupRows(adGroupRows);
     const dedupedPlacement = dedupePlacementRows(placementRows).filter((r) => r.campaign_id);
 
-    // Impression-weighted majority country per campaign_name (used to seed
-    // reddit_campaigns_reference_data.country for new campaigns).
-    const countryByCampaignName = pickReferenceCountryByCampaign(
-      dedupedAdGroup.map((r) => ({
-        campaign_name: (r.campaign_name as string | null) ?? null,
-        country: (r.country as string | null) ?? null,
-        impressions: numOrZero(r.impressions),
-      })),
-    );
-
     await supabase
       .from("reddit_campaigns_ad_group")
       .delete()
@@ -397,40 +316,15 @@ Deno.serve(async (req: Request) => {
     if (uniqueCampaignNames.length > 0) {
       const { data: existing } = await supabase
         .from("reddit_campaigns_reference_data")
-        .select("id,campaign_name,country")
+        .select("campaign_name")
         .in("campaign_name", uniqueCampaignNames);
-      const existingByName = new Map(
-        (existing ?? [])
-          .map((r) => {
-            const name = (r.campaign_name as string)?.trim();
-            return name ? [name, r] as const : null;
-          })
-          .filter(Boolean) as [string, { id: number; campaign_name: string; country: string | null }][],
-      );
+      const existingSet = new Set((existing ?? []).map((r) => (r.campaign_name as string)?.trim()).filter(Boolean));
       const toInsert = uniqueCampaignNames
-        .filter((name) => !existingByName.has(name))
-        .map((campaign_name) => ({
-          campaign_name,
-          country: countryByCampaignName.get(campaign_name) ?? null,
-        }));
+        .filter((name) => !existingSet.has(name))
+        .map((campaign_name) => ({ campaign_name }));
       if (toInsert.length > 0) {
         const { error: refErr } = await supabase.from("reddit_campaigns_reference_data").insert(toInsert);
         if (refErr) throw new Error(`reddit_campaigns_reference_data insert: ${refErr.message}`);
-      }
-      const toUpdate = uniqueCampaignNames
-        .map((campaign_name) => {
-          const existingRow = existingByName.get(campaign_name);
-          const derivedCountry = countryByCampaignName.get(campaign_name)?.trim() || null;
-          const existingCountry = existingRow?.country?.trim() || null;
-          if (!existingRow || existingCountry || !derivedCountry) return null;
-          return { id: existingRow.id, country: derivedCountry };
-        })
-        .filter((r): r is { id: number; country: string } => r != null);
-      if (toUpdate.length > 0) {
-        const { error: updateErr } = await supabase
-          .from("reddit_campaigns_reference_data")
-          .upsert(toUpdate, { onConflict: "id", ignoreDuplicates: false });
-        if (updateErr) throw new Error(`reddit_campaigns_reference_data country update: ${updateErr.message}`);
       }
     }
 

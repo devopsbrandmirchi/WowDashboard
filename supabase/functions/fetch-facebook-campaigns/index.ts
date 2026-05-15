@@ -117,66 +117,6 @@ async function readGraphFailure(res: Response, context: string): Promise<never> 
   throw new Error(`${context}: ${res.status} ${t}`);
 }
 
-/** Meta throttling: https://developers.facebook.com/docs/marketing-api/insights/best-practices/#insightscallload */
-const GRAPH_PAGE_GAP_MS = 450;
-const GRAPH_RATE_LIMIT_MAX_RETRIES = 10;
-const GRAPH_RATE_LIMIT_BASE_MS = 2_000;
-const GRAPH_RATE_LIMIT_CAP_MS = 90_000;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function parseFacebookGraphError(
-  bodyText: string
-): { code: number | null; isTransient: boolean } | null {
-  try {
-    const j = JSON.parse(bodyText) as { error?: { code?: unknown; is_transient?: unknown } };
-    const e = j.error;
-    if (!e || typeof e !== "object") return null;
-    const code = typeof e.code === "number" && Number.isFinite(e.code) ? e.code : null;
-    const isTransient = e.is_transient === true;
-    return { code, isTransient };
-  } catch {
-    return null;
-  }
-}
-
-function isRetryableMetaRateLimit(status: number, bodyText: string): boolean {
-  if (status === 429) return true;
-  const p = parseFacebookGraphError(bodyText);
-  if (!p) return false;
-  // 4 = application request limit; 17 = user-level throttling; 80004 = custom audience / heavy ops
-  if (p.code === 4 || p.code === 17 || p.code === 80004) return true;
-  return false;
-}
-
-/** Fetch one Graph URL; retries on application/user rate limits (OAuthException 4, etc.). */
-async function graphFetchWithRateLimitRetry(url: string, context: string): Promise<Response> {
-  for (let attempt = 0; attempt <= GRAPH_RATE_LIMIT_MAX_RETRIES; attempt++) {
-    const res = await fetch(url);
-    if (res.ok) return res;
-    const bodyText = await res.text();
-    throwIfFacebookAuthError(res.status, bodyText, context);
-    const retryable = attempt < GRAPH_RATE_LIMIT_MAX_RETRIES && isRetryableMetaRateLimit(res.status, bodyText);
-    if (retryable) {
-      const exp = Math.min(
-        GRAPH_RATE_LIMIT_CAP_MS,
-        GRAPH_RATE_LIMIT_BASE_MS * 2 ** attempt
-      );
-      const jitter = Math.floor(Math.random() * 750);
-      const waitMs = exp + jitter;
-      console.warn(
-        `[fetch-facebook-campaigns] ${context}: ${res.status} rate limit, waiting ${waitMs}ms (attempt ${attempt + 1}/${GRAPH_RATE_LIMIT_MAX_RETRIES})`
-      );
-      await sleep(waitMs);
-      continue;
-    }
-    throw new Error(`${context}: ${res.status} ${bodyText}`);
-  }
-  throw new Error(`${context}: exhausted rate-limit retries`);
-}
-
 async function graphGet<T = unknown>(token: string, path: string, params: Record<string, string>): Promise<T> {
   const base = `https://graph.facebook.com/${GRAPH_VERSION}`;
   const pathClean = path.startsWith("/") ? path : `/${path}`;
@@ -196,13 +136,12 @@ async function graphGetAll<T>(
 ): Promise<T[]> {
   const out: T[] = [];
   let nextUrl: string | null = `${path}?${new URLSearchParams(params)}`;
-  let page = 0;
 
   while (nextUrl) {
-    if (page++ > 0) await sleep(GRAPH_PAGE_GAP_MS);
     const fullUrl = nextUrl.startsWith("http") ? nextUrl : `https://graph.facebook.com/${GRAPH_VERSION}${nextUrl}`;
     const url = fullUrl.includes("access_token=") ? fullUrl : `${fullUrl}${fullUrl.includes("?") ? "&" : "?"}access_token=${token}`;
-    const res = await graphFetchWithRateLimitRetry(url, "Graph API pagination");
+    const res = await fetch(url);
+    if (!res.ok) await readGraphFailure(res, "Graph API pagination");
     const json = (await res.json()) as { data?: T[]; paging?: { next?: string } };
     const data = extractData(json);
     out.push(...data);
@@ -234,13 +173,6 @@ interface InsightRow {
   action_values?: Array<{ action_type: string; value: string }>;
 }
 
-interface CampaignCountryInsightRow {
-  campaign_id?: string;
-  campaign_name?: string;
-  country?: string;
-  impressions?: string;
-}
-
 function parseActions(actions: InsightRow["actions"], actionType: string): number {
   if (!Array.isArray(actions)) return 0;
   const a = actions.find((x) => x.action_type === actionType);
@@ -253,31 +185,8 @@ function parseActionValue(actionValues: InsightRow["action_values"], actionType:
   return a?.value ? parseFloat(a.value) || 0 : 0;
 }
 
-function pickReferenceCountries(rows: CampaignCountryInsightRow[]): Map<string, string> {
-  const bestByCampaign = new Map<string, { country: string; impressions: number }>();
-  for (const row of rows) {
-    const campaignName = row.campaign_name?.trim();
-    const country = row.country?.trim();
-    if (!campaignName || !country) continue;
-    const impressions = row.impressions != null ? parseInt(String(row.impressions), 10) || 0 : 0;
-    const prev = bestByCampaign.get(campaignName);
-    if (!prev || impressions > prev.impressions) {
-      bestByCampaign.set(campaignName, { country, impressions });
-    }
-  }
-  const out = new Map<string, string>();
-  for (const [campaignName, meta] of bestByCampaign.entries()) out.set(campaignName, meta.country);
-  return out;
-}
-
-/** Map Graph API insight to public.facebook_campaigns_data row (all columns). `country` is campaign-level from country-breakdown insights. */
-function toDataRow(
-  insight: InsightRow,
-  accountId: string,
-  dateFromStr: string,
-  dateToStr: string,
-  country: string | null = null
-): Record<string, unknown> {
+/** Map Graph API insight to public.facebook_campaigns_data row (all columns). */
+function toDataRow(insight: InsightRow, accountId: string, dateFromStr: string, dateToStr: string): Record<string, unknown> {
   const actions = insight.actions ?? [];
   const actionValues = insight.action_values ?? [];
   const purchaseCount =
@@ -297,7 +206,6 @@ function toDataRow(
 
   return {
     account_id: accountId || insight.account_id || "",
-    country: country?.trim() || null,
     campaign_name: insight.campaign_name ?? null,
     adset_name: insight.adset_name ?? null,
     ad_name: insight.ad_name ?? null,
@@ -394,34 +302,11 @@ Deno.serve(async (req: Request) => {
       },
       (j) => j.data ?? []
     );
-    await sleep(600);
-    const countryInsights = await graphGetAll<CampaignCountryInsightRow>(
-      graphToken,
-      `/${adAccountId}/insights`,
-      {
-        level: "campaign",
-        time_increment: "all_days",
-        time_range: JSON.stringify({ since: dateFromStr, until: dateToStr }),
-        fields: "campaign_id,campaign_name,impressions",
-        breakdowns: "country",
-        limit: "500",
-      },
-      (j) => j.data ?? []
-    );
-    const countryByCampaignName = pickReferenceCountries(countryInsights);
 
     console.log("[fetch-facebook-campaigns] Insights rows:", insights.length);
 
     const accountId = adAccountId.startsWith("act_") ? adAccountId : `act_${adAccountId}`;
-    const rows = insights.map((i) =>
-      toDataRow(
-        i,
-        accountId,
-        dateFromStr,
-        dateToStr,
-        countryByCampaignName.get((i.campaign_name ?? "").trim()) ?? null
-      )
-    );
+    const rows = insights.map((i) => toDataRow(i, accountId, dateFromStr, dateToStr));
 
     await supabase
       .from("facebook_campaigns_data")
@@ -448,44 +333,18 @@ Deno.serve(async (req: Request) => {
     if (uniqueCampaignNames.length > 0) {
       const { data: existing } = await supabase
         .from("facebook_campaigns_reference_data")
-        .select("id,campaign_name,country")
+        .select("campaign_name")
         .in("campaign_name", uniqueCampaignNames);
-      const existingByName = new Map(
-        (existing ?? [])
-          .map((r) => {
-            const name = (r.campaign_name as string)?.trim();
-            return name ? [name, r] as const : null;
-          })
-          .filter(Boolean) as [string, { id: number; campaign_name: string; country: string | null }][]
-      );
+      const existingSet = new Set((existing ?? []).map((r) => (r.campaign_name as string)?.trim()).filter(Boolean));
       const toInsert = uniqueCampaignNames
-        .filter((name) => !existingByName.has(name))
-        .map((campaign_name) => ({
-          campaign_name,
-          campaign_id: null,
-          country: countryByCampaignName.get(campaign_name) ?? null,
-        }));
+        .filter((name) => !existingSet.has(name))
+        .map((campaign_name) => ({ campaign_name, campaign_id: null }));
       if (toInsert.length > 0) {
         const { error: seqErr } = await supabase.rpc("reset_facebook_campaigns_reference_sequence");
         if (seqErr) console.warn("[fetch-facebook-campaigns] Sequence reset failed:", seqErr.message);
         const { error: refErr } = await supabase.from("facebook_campaigns_reference_data").insert(toInsert);
         if (refErr) throw new Error(`facebook_campaigns_reference_data insert: ${refErr.message}`);
         console.log("[fetch-facebook-campaigns] Inserted", toInsert.length, "into facebook_campaigns_reference_data");
-      }
-      const toUpdate = uniqueCampaignNames
-        .map((campaign_name) => {
-          const existingRow = existingByName.get(campaign_name);
-          const derivedCountry = countryByCampaignName.get(campaign_name)?.trim() || null;
-          const existingCountry = existingRow?.country?.trim() || null;
-          if (!existingRow || existingCountry || !derivedCountry) return null;
-          return { id: existingRow.id, country: derivedCountry };
-        })
-        .filter((r): r is { id: number; country: string } => r != null);
-      if (toUpdate.length > 0) {
-        const { error: updateErr } = await supabase
-          .from("facebook_campaigns_reference_data")
-          .upsert(toUpdate, { onConflict: "id", ignoreDuplicates: false });
-        if (updateErr) throw new Error(`facebook_campaigns_reference_data country update: ${updateErr.message}`);
       }
     }
 

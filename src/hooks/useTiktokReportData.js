@@ -99,7 +99,6 @@ function normalizeRow(r) {
   return {
     campaign_id: r.campaign_id,
     campaign_name: r.campaign_name ?? '',
-    country: (r.country != null && r.country !== '') ? String(r.country).trim() : '',
     adset_id: r.adset_id ?? r.adgroup_id ?? r.ad_group_id,
     adset_name: r.adset_name ?? r.adgroup_name ?? r.ad_group_name ?? '',
     ad_id: r.ad_id,
@@ -263,13 +262,14 @@ export function useTiktokReportData() {
   const countries = useMemo(() => {
     const map = new Map();
     rawRows.forEach((r) => {
-      const country = (r.country && String(r.country).trim()) ? String(r.country).trim() : 'Undefined';
+      const ref = getRef(r);
+      const country = (ref && ref.country) ? ref.country : 'Undefined';
       if (!map.has(country)) map.set(country, { key: country, name: country, impressions: 0, reach: 0, clicks: 0, cost: 0, purchases: 0, revenue: 0 });
       const a = map.get(country);
       a.impressions += r.impressions; a.reach += r.reach; a.clicks += r.clicks; a.cost += r.cost; a.purchases += r.purchases; a.revenue += r.revenue;
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [rawRows]);
+  }, [rawRows, getRef]);
 
   const products = useMemo(() => {
     const map = new Map();

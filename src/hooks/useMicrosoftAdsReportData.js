@@ -92,13 +92,11 @@ function normalizeCampaignRow(r) {
   const day = getRowDate(r) ?? toDayKey(r.campaign_date ?? r.day ?? r.date) ?? null;
   const impressions = num(r.impressions ?? r.total_impressions ?? r.impression);
   const clicks = num(r.clicks ?? r.total_clicks);
-  const countryRaw = r.country != null ? String(r.country).trim() : '';
   return {
     id: r.id,
     campaign_name: r.campaign_name ?? r.campaign ?? '',
     ad_group_name: r.ad_group_name ?? r.adgroup_name ?? r.campaign_name ?? '',
     community: r.community ?? r.subreddit ?? '',
-    country: countryRaw,
     day,
     impressions,
     clicks,
@@ -289,7 +287,8 @@ export function useMicrosoftAdsReportData() {
   const countryData = useMemo(() => {
     const map = new Map();
     rawCampaigns.forEach((r) => {
-      const country = r.country ? r.country : 'Unknown';
+      const ref = getRef(r.campaign_name);
+      const country = (ref && ref.country) ? ref.country : 'Unknown';
       if (!map.has(country)) map.set(country, { key: country, name: country, impressions: 0, clicks: 0, cost: 0, purchases: 0 });
       const a = map.get(country);
       a.impressions += r.impressions;
@@ -298,7 +297,7 @@ export function useMicrosoftAdsReportData() {
       a.purchases += r.purchases;
     });
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
-  }, [rawCampaigns]);
+  }, [rawCampaigns, getRef]);
 
   const productData = useMemo(() => {
     const map = new Map();
