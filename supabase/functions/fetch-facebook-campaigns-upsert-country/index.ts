@@ -42,6 +42,61 @@ function getFacebookOAuthError(json: unknown): { code: number | null; subcode: n
   };
 }
 
+const GRAPH_PAGE_GAP_MS = 450;
+const GRAPH_RATE_LIMIT_MAX_RETRIES = 10;
+const GRAPH_RATE_LIMIT_BASE_MS = 2_000;
+const GRAPH_RATE_LIMIT_CAP_MS = 90_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableMetaRateLimit(status: number, bodyJson: unknown): boolean {
+  if (status === 429) return true;
+  const oauthErr = getFacebookOAuthError(bodyJson);
+  if (!oauthErr || oauthErr.code == null) return false;
+  return oauthErr.code === 4 || oauthErr.code === 17 || oauthErr.code === 80004;
+}
+
+async function graphFetchWithRateLimitRetry(url: string): Promise<Response> {
+  for (let attempt = 0; attempt <= GRAPH_RATE_LIMIT_MAX_RETRIES; attempt++) {
+    const res = await fetch(url);
+    if (res.ok) return res;
+    let bodyText = "";
+    let bodyJson: unknown = null;
+    try {
+      bodyText = await res.text();
+      bodyJson = bodyText ? JSON.parse(bodyText) : null;
+    } catch {
+      bodyJson = null;
+    }
+    const oauthErr = getFacebookOAuthError(bodyJson);
+    if (oauthErr?.code === 190) {
+      const isExpired = oauthErr.subcode === 463 || /expired/i.test(oauthErr.message);
+      throw new HttpError(
+        401,
+        isExpired ? "facebook_token_expired" : "facebook_token_invalid",
+        isExpired
+          ? "Facebook access token expired. Reconnect Facebook / Meta in Settings and try sync again."
+          : "Facebook access token is invalid or malformed. Reconnect Facebook / Meta in Settings, or save a valid access token, then try sync again.",
+        bodyJson && typeof bodyJson === "object" ? (bodyJson as Record<string, unknown>) : undefined,
+      );
+    }
+    if (attempt < GRAPH_RATE_LIMIT_MAX_RETRIES && isRetryableMetaRateLimit(res.status, bodyJson)) {
+      const exp = Math.min(GRAPH_RATE_LIMIT_CAP_MS, GRAPH_RATE_LIMIT_BASE_MS * 2 ** attempt);
+      const jitter = Math.floor(Math.random() * 750);
+      const waitMs = exp + jitter;
+      console.warn(
+        `${LOG} Graph rate limit ${res.status}, waiting ${waitMs}ms (attempt ${attempt + 1}/${GRAPH_RATE_LIMIT_MAX_RETRIES})`,
+      );
+      await sleep(waitMs);
+      continue;
+    }
+    throw new Error(`Graph: ${res.status} ${bodyText || "Upstream request failed"}`);
+  }
+  throw new Error("Graph: exhausted rate-limit retries");
+}
+
 function getEnv(name: string): string {
   const v = Deno.env.get(name);
   if (!v) throw new Error(`Missing env: ${name}`);
@@ -108,33 +163,12 @@ async function graphGetAll<T>(
 ): Promise<T[]> {
   const out: T[] = [];
   let nextUrl: string | null = `${path}?${new URLSearchParams(params)}`;
+  let page = 0;
   while (nextUrl) {
+    if (page++ > 0) await sleep(GRAPH_PAGE_GAP_MS);
     const fullUrl = nextUrl.startsWith("http") ? nextUrl : `https://graph.facebook.com/${GRAPH_VERSION}${nextUrl}`;
     const url = fullUrl.includes("access_token=") ? fullUrl : `${fullUrl}${fullUrl.includes("?") ? "&" : "?"}access_token=${token}`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      let bodyText = "";
-      let bodyJson: unknown = null;
-      try {
-        bodyText = await res.text();
-        bodyJson = bodyText ? JSON.parse(bodyText) : null;
-      } catch {
-        bodyJson = null;
-      }
-      const oauthErr = getFacebookOAuthError(bodyJson);
-      if (oauthErr?.code === 190) {
-        const isExpired = oauthErr.subcode === 463 || /expired/i.test(oauthErr.message);
-        throw new HttpError(
-          401,
-          isExpired ? "facebook_token_expired" : "facebook_token_invalid",
-          isExpired
-            ? "Facebook access token expired. Reconnect Facebook / Meta in Settings and try sync again."
-            : "Facebook access token is invalid or malformed. Reconnect Facebook / Meta in Settings, or save a valid access token, then try sync again.",
-          bodyJson && typeof bodyJson === "object" ? (bodyJson as Record<string, unknown>) : undefined,
-        );
-      }
-      throw new Error(`Graph: ${res.status} ${bodyText || "Upstream request failed"}`);
-    }
+    const res = await graphFetchWithRateLimitRetry(url);
     const json = (await res.json()) as { data?: T[]; paging?: { next?: string } };
     out.push(...extractData(json));
     nextUrl = json.paging?.next ?? null;
