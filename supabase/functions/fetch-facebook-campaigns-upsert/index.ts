@@ -43,10 +43,17 @@ function getFacebookOAuthError(json: unknown): { code: number | null; subcode: n
 }
 
 /** Meta insights throttling — space pages and retry OAuthException 4 / HTTP 429. */
-const GRAPH_PAGE_GAP_MS = 450;
-const GRAPH_RATE_LIMIT_MAX_RETRIES = 10;
-const GRAPH_RATE_LIMIT_BASE_MS = 2_000;
-const GRAPH_RATE_LIMIT_CAP_MS = 90_000;
+const GRAPH_PAGE_GAP_MS = 200;
+/** Edge runtime ~60s wall clock; long backoff sleeps cause 504 before Graph retries finish. */
+const GRAPH_RATE_LIMIT_MAX_RETRIES = 8;
+const GRAPH_RATE_LIMIT_BASE_MS = 1_500;
+const GRAPH_RATE_LIMIT_CAP_MS = 10_000;
+/** Small windows keep each Insights job paginating less per request (critical under ~60s gateway limit). */
+const GRAPH_INSIGHTS_CHUNK_DAYS = 2;
+/** Fetch up to N non-overlapping date windows in parallel to cut wall-clock time (watch Meta rate limits). */
+const GRAPH_CHUNK_CONCURRENCY = 2;
+/** Pause between parallel batch rounds (not between pages of the same job). */
+const GRAPH_CHUNK_PAUSE_MS = 120;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -300,6 +307,51 @@ function eachDateInRange(fromStr: string, toStr: string): string[] {
   return out;
 }
 
+function eachInsightsDateChunk(
+  fromStr: string,
+  toStr: string,
+  maxDays: number
+): Array<{ since: string; until: string }> {
+  const dates = eachDateInRange(fromStr, toStr);
+  const chunks: Array<{ since: string; until: string }> = [];
+  for (let i = 0; i < dates.length; i += maxDays) {
+    const slice = dates.slice(i, i + maxDays);
+    chunks.push({ since: slice[0]!, until: slice[slice.length - 1]! });
+  }
+  return chunks;
+}
+
+function dedupeInsightRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const dedupe = new Map<string, Record<string, unknown>>();
+  for (const r of rows) {
+    const k = `${r.account_id}\0${r.ad_id}\0${r.day}\0${r.platform ?? ""}\0${r.placement ?? ""}\0${r.device_platform ?? ""}`;
+    dedupe.set(k, r);
+  }
+  return [...dedupe.values()];
+}
+
+async function graphGetInsightsAdPlacementRange(
+  token: string,
+  adAccountId: string,
+  since: string,
+  until: string,
+  fieldsCsv: string
+): Promise<InsightRow[]> {
+  return graphGetAll<InsightRow>(
+    token,
+    `/${adAccountId}/insights`,
+    {
+      level: "ad",
+      time_increment: "1",
+      time_range: JSON.stringify({ since, until }),
+      fields: fieldsCsv,
+      breakdowns: "publisher_platform,platform_position",
+      limit: "500",
+    },
+    (j) => j.data ?? []
+  );
+}
+
 function isMissingTableError(message: string, tableName: string): boolean {
   const m = message.toLowerCase();
   const t = tableName.toLowerCase();
@@ -356,32 +408,10 @@ Deno.serve(async (req: Request) => {
       "date_start", "date_stop", "impressions", "reach", "spend", "clicks", "frequency", "actions", "action_values",
     ].join(",");
 
-    const insights = await graphGetAll<InsightRow>(
-      graphToken,
-      `/${adAccountId}/insights`,
-      {
-        level: "ad",
-        time_increment: "1",
-        time_range: JSON.stringify({ since: dateFromStr, until: dateToStr }),
-        fields,
-        breakdowns: "publisher_platform,platform_position",
-        limit: "500",
-      },
-      (j) => j.data ?? []
-    );
-
-    const rows = insights
-      .map((i) => toDataRow(i, accountId, dateFromStr, dateToStr))
-      .filter((r): r is Record<string, unknown> => r != null);
-
-    const dedupe = new Map<string, Record<string, unknown>>();
-    for (const r of rows) {
-      const k = `${r.account_id}\0${r.ad_id}\0${r.day}\0${r.platform ?? ""}\0${r.placement ?? ""}\0${r.device_platform ?? ""}`;
-      dedupe.set(k, r);
-    }
-    const uniqueRows = [...dedupe.values()];
-
-    console.log(LOG, "insights", insights.length, "rows", uniqueRows.length);
+    const dateChunks = eachInsightsDateChunk(dateFromStr, dateToStr, GRAPH_INSIGHTS_CHUNK_DAYS);
+    let rawInsightCount = 0;
+    let upsertedRowCount = 0;
+    const campaignNamesSeen = new Set<string>();
 
     const { error: seqErr } = await supabase.rpc("reset_facebook_campaigns_data_sequence");
     if (seqErr) console.warn(LOG, "facebook_campaigns_data sequence", seqErr.message);
@@ -392,16 +422,46 @@ Deno.serve(async (req: Request) => {
       return rest;
     };
 
-    for (let i = 0; i < uniqueRows.length; i += BATCH) {
-      const chunk = uniqueRows.slice(i, i + BATCH).map(stripId);
-      const { error } = await supabase.from("facebook_campaigns_data").upsert(chunk, {
-        onConflict: "account_id,ad_id,day,platform,placement,device_platform",
-        ignoreDuplicates: false,
-      });
-      if (error) throw new Error(`facebook_campaigns_data upsert: ${error.message}`);
+    const upsertRows = async (rows: Record<string, unknown>[]) => {
+      for (let i = 0; i < rows.length; i += BATCH) {
+        const chunk = rows.slice(i, i + BATCH).map(stripId);
+        const { error } = await supabase.from("facebook_campaigns_data").upsert(chunk, {
+          onConflict: "account_id,ad_id,day,platform,placement,device_platform",
+          ignoreDuplicates: false,
+        });
+        if (error) throw new Error(`facebook_campaigns_data upsert: ${error.message}`);
+      }
+    };
+
+    for (let i = 0; i < dateChunks.length; i += GRAPH_CHUNK_CONCURRENCY) {
+      const round = dateChunks.slice(i, i + GRAPH_CHUNK_CONCURRENCY);
+      if (i > 0) await sleep(GRAPH_CHUNK_PAUSE_MS);
+      console.log(
+        `${LOG} insights batch ${round.map((c) => `${c.since}..${c.until}`).join(", ")} (${Math.floor(i / GRAPH_CHUNK_CONCURRENCY) + 1}/${Math.ceil(dateChunks.length / GRAPH_CHUNK_CONCURRENCY)})`
+      );
+      const parts = await Promise.all(
+        round.map(({ since, until }) =>
+          graphGetInsightsAdPlacementRange(graphToken, adAccountId, since, until, fields)
+        )
+      );
+      for (const part of parts) {
+        rawInsightCount += part.length;
+        const rows = part
+          .map((ins) => toDataRow(ins, accountId, dateFromStr, dateToStr))
+          .filter((r): r is Record<string, unknown> => r != null);
+        const uniqueChunkRows = dedupeInsightRows(rows);
+        upsertedRowCount += uniqueChunkRows.length;
+        for (const r of uniqueChunkRows) {
+          const n = (r.campaign_name as string)?.trim();
+          if (n) campaignNamesSeen.add(n);
+        }
+        await upsertRows(uniqueChunkRows);
+      }
     }
 
-    const uniqueCampaignNames = [...new Set(uniqueRows.map((r) => (r.campaign_name as string)?.trim()).filter(Boolean))];
+    console.log(LOG, "insights raw", rawInsightCount, "rows upserted (chunk deduped)", upsertedRowCount);
+
+    const uniqueCampaignNames = [...campaignNamesSeen];
     if (uniqueCampaignNames.length > 0) {
       const { data: existing } = await supabase.from("facebook_campaigns_reference_data").select("campaign_name").in("campaign_name", uniqueCampaignNames);
       const existingSet = new Set((existing ?? []).map((r) => (r.campaign_name as string)?.trim()).filter(Boolean));
@@ -434,7 +494,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const runId = crypto.randomUUID();
-    const logMeta = { insight_rows: uniqueRows.length };
+    const logMeta = { insight_rows: upsertedRowCount };
     const logRows = hist.map((r) => ({
       platform: "facebook_ads",
       account_id: r.account_id,
@@ -468,7 +528,7 @@ Deno.serve(async (req: Request) => {
       account_id: accountId,
       date_from: dateFromStr,
       date_to: dateToStr,
-      upserted: { rows: uniqueRows.length },
+      upserted: { rows: upsertedRowCount },
       sync_history_rows: historyWritten ? hist.length : 0,
       sync_history_skipped: !historyWritten,
       ads_sync_log_rows: logWritten ? logRows.length : 0,

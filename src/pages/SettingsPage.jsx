@@ -10,6 +10,27 @@ import { ROLE_IDS } from '../constants/roles.js';
 
 const META_ADMIN_ROLE_IDS = [ROLE_IDS.SUPER_ADMIN, ROLE_IDS.ADMIN];
 
+/** Split YYYY-MM-DD range so each Meta sync HTTP request stays under the Edge gateway limit. */
+function splitIsoDateRangeIntoChunks(dateFromStr, dateToStr, maxDaysPerChunk) {
+  const out = [];
+  let start = dateFromStr;
+  while (start <= dateToStr) {
+    const d0 = new Date(`${start}T12:00:00.000Z`);
+    const d1 = new Date(d0);
+    d1.setUTCDate(d1.getUTCDate() + maxDaysPerChunk - 1);
+    let until = d1.toISOString().slice(0, 10);
+    if (until > dateToStr) until = dateToStr;
+    out.push({ date_from: start, date_to: until });
+    if (until >= dateToStr) break;
+    const next = new Date(`${until}T12:00:00.000Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    start = next.toISOString().slice(0, 10);
+  }
+  return out;
+}
+
+const META_EDGE_SYNC_CHUNK_DAYS = 10;
+
 function formatSyncLogStats(platform, meta) {
   if (!meta || typeof meta !== 'object') return '—';
   if (platform === 'google_ads') {
@@ -1238,12 +1259,12 @@ export function SettingsPage() {
                 }
                 syncLogPlatform="facebook_ads"
                 onSync={async (dateFrom, dateTo) => {
-                  const { data, error } = await invokeEdgeFunction('fetch-facebook-campaigns-upsert', {
-                    date_from: dateFrom,
-                    date_to: dateTo,
-                  });
-                  if (error) throw new Error(error.message || 'Edge function error');
-                  if (data?.error) throw new Error(data.message || data.error);
+                  const ranges = splitIsoDateRangeIntoChunks(dateFrom, dateTo, META_EDGE_SYNC_CHUNK_DAYS);
+                  for (const range of ranges) {
+                    const { data, error } = await invokeEdgeFunction('fetch-facebook-campaigns-upsert', range);
+                    if (error) throw new Error(error.message || 'Edge function error');
+                    if (data?.error) throw new Error(data.message || data.error);
+                  }
                 }}
               />
             )}

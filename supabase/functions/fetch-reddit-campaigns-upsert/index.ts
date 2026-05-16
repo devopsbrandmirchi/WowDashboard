@@ -145,7 +145,8 @@ function centDiv(v: unknown): number | null {
 function dedupeAdGroupRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
   const map = new Map<string, Record<string, unknown>>();
   for (const r of rows) {
-    const key = `${r.account_id}|${r.campaign_date}|${r.campaign_name ?? ""}|${r.ad_group_name ?? ""}`;
+    const key =
+      `${r.account_id}|${r.campaign_date}|${r.campaign_name ?? ""}|${r.ad_group_name ?? ""}|${r.country ?? ""}`;
     const existing = map.get(key);
     if (!existing) {
       map.set(key, { ...r });
@@ -270,6 +271,7 @@ Deno.serve(async (req: Request) => {
           const agid = String(r.ad_group_id ?? "");
           adGroupRows.push({
             account_id: accountId,
+            country: null,
             campaign_name: campaignNames[cid] ?? null,
             ad_group_name: adGroupNames[agid] ?? null,
             campaign_date: String(r.date).slice(0, 10),
@@ -322,7 +324,7 @@ Deno.serve(async (req: Request) => {
     for (let i = 0; i < dedupedAdGroup.length; i += BATCH) {
       const chunk = dedupedAdGroup.slice(i, i + BATCH).map(stripId);
       const { error } = await supabase.from("reddit_campaigns_ad_group").upsert(chunk, {
-        onConflict: "account_id,campaign_date,campaign_name,ad_group_name",
+        onConflict: "account_id,campaign_date,campaign_name,ad_group_name,country",
         ignoreDuplicates: false,
       });
       if (error) throw new Error(`reddit_campaigns_ad_group upsert: ${error.message}`);

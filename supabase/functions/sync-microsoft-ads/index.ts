@@ -768,7 +768,8 @@ Deno.serve(async (req: Request) => {
       .from("microsoft_ads_sync_by_date")
       .upsert(syncLogRows, { onConflict: "account_id,segment_date" });
 
-    // Also log to the platform-wide ads_sync_by_date_log table (run_id + metadata required for UI sync log)
+    // Also log to the platform-wide ads_sync_by_date_log table (run_id + metadata required for UI sync log).
+    // Append-only log: insert (not upsert) — table has no unique constraint on (platform,account_id,segment_date).
     const syncedAtLog = new Date().toISOString();
     const runId = crypto.randomUUID();
     const logMeta = {
@@ -785,12 +786,13 @@ Deno.serve(async (req: Request) => {
       date_range_end: dateToStr,
       metadata: logMeta,
     }));
-    await supabase
-      .from("ads_sync_by_date_log")
-      .upsert(logRows, { onConflict: "platform,account_id,segment_date" })
-      .then(({ error }) => {
-        if (error) console.warn("[sync-microsoft-ads] ads_sync_by_date_log:", error.message);
-      });
+    const LOG_BATCH = 500;
+    for (let i = 0; i < logRows.length; i += LOG_BATCH) {
+      const { error: logErr } = await supabase
+        .from("ads_sync_by_date_log")
+        .insert(logRows.slice(i, i + LOG_BATCH));
+      if (logErr) console.warn("[sync-microsoft-ads] ads_sync_by_date_log:", logErr.message);
+    }
 
     const result = {
       ok: true,

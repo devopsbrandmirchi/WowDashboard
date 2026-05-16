@@ -148,11 +148,12 @@ function centDiv(v: unknown): number | null {
   return n != null ? Math.round(n / 100 * 100) / 100 : null;
 }
 
-/** Dedupe ad_group rows by (account_id, campaign_date, campaign_name, ad_group_name), summing metrics. */
+/** Dedupe ad_group rows by natural key including country (rollup sync uses country = null), summing metrics. */
 function dedupeAdGroupRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
   const map = new Map<string, Record<string, unknown>>();
   for (const r of rows) {
-    const key = `${r.account_id ?? ""}|${r.campaign_date}|${r.campaign_name ?? ""}|${r.ad_group_name ?? ""}`;
+    const key =
+      `${r.account_id ?? ""}|${r.campaign_date}|${r.campaign_name ?? ""}|${r.ad_group_name ?? ""}|${r.country ?? ""}`;
     const existing = map.get(key);
     if (!existing) {
       map.set(key, { ...r });
@@ -240,6 +241,7 @@ Deno.serve(async (req: Request) => {
           if (!r.date) continue;
           adGroupRows.push({
             account_id: accountId,
+            country: null,
             campaign_name: campaignNames[String(r.campaign_id)] ?? null,
             ad_group_name: adGroupNames[String(r.ad_group_id)] ?? null,
             campaign_date: String(r.date).slice(0, 10),
