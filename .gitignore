@@ -24,3 +24,7 @@ node_modules
 *.sw?
 .env*
 .env*
+
+# Supabase CLI local cache
+supabase/.temp/
+
