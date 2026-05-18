@@ -4,7 +4,6 @@ import { DateRangePicker } from '../components/DatePicker';
 import Chart from 'chart.js/auto';
 import { exportReportPdf, getDateRangeLabel } from '../utils/exportReportPdf';
 import { useApp } from '../context/AppContext';
-import { supabase } from '../lib/supabase';
 
 const fU = (n) => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fI = (n) => Math.round(Number(n || 0)).toLocaleString('en-US');
@@ -219,10 +218,7 @@ const METRIC_COLS = [
 
 export function TiktokReportPage() {
   const { branding, registerExportPdf } = useApp();
-  const { filters, batchUpdateFilters, fetchData, loading, error, campaigns, adSets, ads, placements, products, shows, days, kpis, dailyTrends } = useTiktokReportData();
-  const [dbCountries, setDbCountries] = useState([]);
-  const [dbCountriesLoading, setDbCountriesLoading] = useState(true);
-  const [dbCountriesError, setDbCountriesError] = useState(null);
+  const { filters, batchUpdateFilters, fetchData, loading, error, campaigns, adSets, ads, placements, countries, products, shows, days, kpis, dailyTrends } = useTiktokReportData();
 
   const [activeTab, setActiveTab] = useState('campaigns');
   const [sort, setSort] = useState(() => {
@@ -258,68 +254,8 @@ export function TiktokReportPage() {
   const chartRef = useRef(null);
   const chartInstance = useRef(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    const fetchCountriesFromCampaignTable = async () => {
-      setDbCountriesLoading(true);
-      setDbCountriesError(null);
-      try {
-        const { from, to } = resolveDateRange(filters.datePreset, filters.dateFrom, filters.dateTo);
-        const pageSize = 1000;
-        let offset = 0;
-        const rows = [];
-        while (true) {
-          let q = supabase
-            .from('tiktok_campaigns_data')
-            .select('campaign_name,country,cost,impressions,clicks,conversions,total_purchase,date')
-            .range(offset, offset + pageSize - 1);
-          if ((filters.campaignSearch || '').trim()) q = q.ilike('campaign_name', `%${filters.campaignSearch.trim()}%`);
-          if ((filters.adGroupSearch || '').trim()) q = q.ilike('ad_group_name', `%${filters.adGroupSearch.trim()}%`);
-          if (from) q = q.gte('date', from);
-          if (to) q = q.lte('date', to);
-
-          const { data, error: queryError } = await q;
-          if (queryError) throw queryError;
-          if (!data || data.length === 0) break;
-          rows.push(...data);
-          if (data.length < pageSize) break;
-          offset += pageSize;
-        }
-
-        const map = new Map();
-        rows.forEach((r) => {
-          const country = (r.country || '').toString().trim() || 'Undefined';
-          if (!map.has(country)) {
-            map.set(country, { key: country, name: country, cost: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0 });
-          }
-          const item = map.get(country);
-          item.cost += toNum(r.cost);
-          item.impressions += toNum(r.impressions);
-          item.clicks += toNum(r.clicks);
-          item.purchases += toNum(r.conversions ?? r.total_purchase);
-        });
-
-        const nextCountries = Array.from(map.values()).sort((a, b) => (b.cost || 0) - (a.cost || 0));
-        if (!cancelled) setDbCountries(nextCountries);
-      } catch (err) {
-        if (!cancelled) {
-          setDbCountries([]);
-          setDbCountriesError(err?.message || 'Failed to fetch TikTok countries');
-        }
-      } finally {
-        if (!cancelled) setDbCountriesLoading(false);
-      }
-    };
-
-    fetchCountriesFromCampaignTable();
-    return () => {
-      cancelled = true;
-    };
-  }, [filters.datePreset, filters.dateFrom, filters.dateTo, filters.campaignSearch, filters.adGroupSearch]);
-
-  const countries = dbCountries;
-  const combinedLoading = loading || dbCountriesLoading;
-  const combinedError = error || dbCountriesError;
+  const combinedLoading = loading;
+  const combinedError = error;
 
   const tabDataMap = {
     campaigns,

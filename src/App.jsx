@@ -10,10 +10,15 @@ import { Header } from './components/Header';
 import { NotificationContainer } from './components/Notification';
 import { DashboardPage } from './pages/DashboardPage';
 import { GoogleAdsPage } from './pages/GoogleAdsPage';
+import { GoogleAdsCountryPage } from './pages/GoogleAdsCountryPage';
 import { MetaReportPage } from './pages/MetaReportPage';
+import { MetaAdsCountryPage } from './pages/MetaAdsCountryPage';
 import { TiktokReportPage } from './pages/TiktokReportPage';
 import { RedditReportPage } from './pages/RedditReportPage';
+import { RedditAdsCountryPage } from './pages/RedditAdsCountryPage';
 import { MicrosoftAdsReportPage } from './pages/MicrosoftAdsReportPage';
+import { MicrosoftAdsCountryPage } from './pages/MicrosoftAdsCountryPage';
+import { TiktokAdsCountryPage } from './pages/TiktokAdsCountryPage';
 import { CombinedReportPage } from './pages/CombinedReportPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { RolesPermissionsPage } from './pages/RolesPermissionsPage';
@@ -42,10 +47,15 @@ const PATH_TO_PAGE = {
   '/subscriptions/hubspot-email': 'subscriptions-hubspot-email',
   '/combined-reporting': 'combined-reporting',
   '/google-ads': 'google-ads',
+  '/google-ads-country': 'google-ads-country',
   '/meta-ads': 'meta-ads',
+  '/meta-ads-country': 'meta-ads-country',
   '/bing-ads': 'bing-ads',
+  '/bing-ads-country': 'bing-ads-country',
   '/tiktok-ads': 'tiktok-ads',
+  '/tiktok-ads-country': 'tiktok-ads-country',
   '/reddit-ads': 'reddit-ads',
+  '/reddit-ads-country': 'reddit-ads-country',
   '/settings': 'settings',
   '/settings/roles-permissions': 'roles-permissions',
   '/settings/users': 'users',
@@ -63,10 +73,15 @@ const PAGE_TITLES = {
   'dashboard': 'Executive Dashboard',
   'combined-reporting': 'Combined Reporting',
   'google-ads': 'Google Ads',
+  'google-ads-country': 'Google Ads Country',
   'meta-ads': 'Meta Ads',
+  'meta-ads-country': 'Meta Ads Country',
   'bing-ads': 'Microsoft Ads',
+  'bing-ads-country': 'Microsoft Ads Country',
   'tiktok-ads': 'TikTok Ads',
+  'tiktok-ads-country': 'TikTok Ads Country',
   'reddit-ads': 'Reddit Ads',
+  'reddit-ads-country': 'Reddit Ads Country',
   'settings': 'White-Label Settings',
   'roles-permissions': 'Roles & Permissions',
   'users': 'Users',
@@ -103,10 +118,15 @@ function CurrentPage({ forcePage }) {
 
   if (page === 'dashboard') return <DashboardPage />;
   if (page === 'google-ads') return <GoogleAdsPage />;
+  if (page === 'google-ads-country') return <GoogleAdsCountryPage />;
   if (page === 'meta-ads') return <MetaReportPage />;
+  if (page === 'meta-ads-country') return <MetaAdsCountryPage />;
   if (page === 'tiktok-ads') return <TiktokReportPage />;
+  if (page === 'tiktok-ads-country') return <TiktokAdsCountryPage />;
   if (page === 'reddit-ads') return <RedditReportPage />;
+  if (page === 'reddit-ads-country') return <RedditAdsCountryPage />;
   if (page === 'bing-ads') return <MicrosoftAdsReportPage />;
+  if (page === 'bing-ads-country') return <MicrosoftAdsCountryPage />;
   if (page === 'combined-reporting') return <CombinedReportPage />;
   if (page === 'settings') return <SettingsPage />;
   if (page === 'roles-permissions') return <RolesPermissionsPage />;

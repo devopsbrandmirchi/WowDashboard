@@ -1,19 +1,21 @@
-// TikTok Ads: sync report rows into tiktok_campaigns_data (+ reference campaign names, sync log).
-// Secrets (set in Supabase Dashboard → Edge Functions):
+// TikTok Ads country sync: writes to dedicated country tables without touching legacy TikTok sync.
+// Secrets (set in Supabase Dashboard -> Edge Functions):
 //   TIKTOK_ACCESS_TOKEN, TIKTOK_ADVERTISER_ID
 // Optional: TIKTOK_API_URL (default https://business-api.tiktok.com/open_api/v1.3)
-// POST { date_from?, date_to? } or GET ?date_from=&date_to= — default last 2 days.
-// Requires migration 20250318220000_tiktok_campaigns_data_and_sync.sql
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const LOG = "[fetch-tiktok-campaigns-upsert]";
+const LOG = "[fetch-tiktok-campaigns-upsert-country]";
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 const DEFAULT_API = "https://business-api.tiktok.com/open_api/v1.3";
+const TABLES = {
+  data: "tiktok_campaigns_data_country",
+  syncHistory: "tiktok_ads_sync_by_date_country",
+};
 
 function getEnv(name: string): string {
   const v = Deno.env.get(name);
@@ -89,7 +91,19 @@ interface TikTokReportResponse {
   };
 }
 
-/** Dimensions/metrics: try placement breakdown; fall back without placement if API rejects. */
+class HttpError extends Error {
+  status: number;
+  code: string;
+  details?: Record<string, unknown>;
+
+  constructor(status: number, code: string, message: string, details?: Record<string, unknown>) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
 const METRICS_FULL = [
   "spend",
   "impressions",
@@ -103,15 +117,30 @@ const METRICS_FULL = [
 ];
 const METRICS_MIN = ["spend", "impressions", "clicks"];
 
-/** TikTok report/integrated/get: max 4 dimensions (else code 40002). */
-const DIM_PLACEMENT = ["stat_time_day", "ad_id", "placement_type"];
-const DIM_AUDIENCE_PLACEMENT = ["stat_time_day", "ad_id", "placement"];
-const DIM_BASE = ["stat_time_day", "ad_id"];
+const DIM_PLACEMENT_COUNTRY = ["stat_time_day", "ad_id", "placement_type", "country_code"];
+const DIM_AUDIENCE_PLACEMENT_COUNTRY = ["stat_time_day", "ad_id", "placement", "country_code"];
+const DIM_BASE_COUNTRY = ["stat_time_day", "ad_id", "country_code"];
 
 function isDimensionOrPlacementRejection(msg: string): boolean {
+  if (isBannedIpCountryMessage(msg)) return false;
   return (
-    /dimension|placement_type|\bplacement\b|length must be/i.test(msg) ||
+    /dimension|placement_type|\bplacement\b|country|length must be/i.test(msg) ||
     (/\b40002\b/.test(msg) && !/metric/i.test(msg))
+  );
+}
+
+function isBannedIpCountryMessage(msg: string): boolean {
+  return /banned country list|client ip address/i.test(msg);
+}
+
+function isUnsupportedPlacementDimensionsMessage(msg: string): boolean {
+  return (
+    /invalid value for dimensions/i.test(msg) &&
+    (
+      /placement_type is not supported/i.test(msg) ||
+      /\['stat_time_day',\s*'ad_id',\s*'placement',\s*'country_code'\]\s*is not supported/i.test(msg) ||
+      /placement.*country_code.*is not supported/i.test(msg)
+    )
   );
 }
 
@@ -121,6 +150,15 @@ function rowsHaveAnyPlacement(rows: TikTokReportRow[]): boolean {
     if (str(d.placement_type ?? d.placement) != null) return true;
   }
   return false;
+}
+
+function pickCountry(dimensions: Record<string, unknown>): string {
+  const c =
+    str(dimensions.country_code) ??
+    str(dimensions.country) ??
+    str(dimensions.geo_country_code) ??
+    str(dimensions.stat_country_code);
+  return c || "unknown";
 }
 
 interface AdEnrich {
@@ -145,7 +183,6 @@ async function fetchAdEnrichment(
     const ids = unique.slice(i, i + ID_CHUNK);
     const u = new URL(`${apiBase.replace(/\/$/, "")}/ad/get/`);
     u.searchParams.set("advertiser_id", advertiserId);
-    // TikTok ad/get expects FilteringAdGet shape: { "ad_ids": ["..."] }, not [{ field, operator, value }].
     u.searchParams.set("filtering", JSON.stringify({ ad_ids: ids }));
     u.searchParams.set("page", "1");
     u.searchParams.set("page_size", "1000");
@@ -188,13 +225,15 @@ async function fetchTikTokReportPages(
   withPlacement: boolean,
   metricsList: string[] = METRICS_FULL,
   reportType: "BASIC" | "AUDIENCE" = "BASIC",
-  audiencePlacementDim: "placement" | "placement_type" = "placement",
+  audiencePlacementDim: "placement" | "placement_type" = "placement"
 ): Promise<TikTokReportRow[]> {
   let dimensions: string[];
-  if (!withPlacement) dimensions = [...DIM_BASE];
-  else if (reportType === "BASIC") dimensions = [...DIM_PLACEMENT];
+  if (!withPlacement) dimensions = [...DIM_BASE_COUNTRY];
+  else if (reportType === "BASIC") dimensions = [...DIM_PLACEMENT_COUNTRY];
   else {
-    dimensions = audiencePlacementDim === "placement" ? [...DIM_AUDIENCE_PLACEMENT] : [...DIM_PLACEMENT];
+    dimensions = audiencePlacementDim === "placement"
+      ? [...DIM_AUDIENCE_PLACEMENT_COUNTRY]
+      : [...DIM_PLACEMENT_COUNTRY];
   }
 
   const metricsForRequest = reportType === "AUDIENCE" ? METRICS_MIN : metricsList;
@@ -228,6 +267,14 @@ async function fetchTikTokReportPages(
   let json = await fetchPage();
   if (json.code !== 0) {
     const msg = json.message || "";
+    if (json.code === 41000 && isBannedIpCountryMessage(msg)) {
+      throw new HttpError(
+        403,
+        "tiktok_ip_country_blocked",
+        "TikTok API rejected this request because the Edge Function IP is in TikTok's banned country list. Deploy this function in an allowed region or route requests through an allowed egress IP.",
+        { tiktok_code: json.code, tiktok_message: msg },
+      );
+    }
     if (reportType === "BASIC" && metricsList !== METRICS_MIN && /metric/i.test(msg)) {
       return fetchTikTokReportPages(
         apiBase,
@@ -238,26 +285,30 @@ async function fetchTikTokReportPages(
         withPlacement,
         METRICS_MIN,
         "BASIC",
-        audiencePlacementDim,
+        audiencePlacementDim
       );
     }
     if (withPlacement && isDimensionOrPlacementRejection(msg)) {
-      if (reportType === "BASIC") {
-        console.warn(LOG, "BASIC+placement rejected; trying AUDIENCE+placement:", msg.slice(0, 260));
+      if (isUnsupportedPlacementDimensionsMessage(msg)) {
+        console.warn(
+          LOG,
+          "Placement+country dimensions unsupported; fetching ad/day/country directly:",
+          msg.slice(0, 260),
+        );
         return fetchTikTokReportPages(
           apiBase,
           token,
           advertiserId,
           startDate,
           endDate,
-          true,
+          false,
           METRICS_FULL,
-          "AUDIENCE",
+          "BASIC",
           "placement",
         );
       }
-      if (reportType === "AUDIENCE" && audiencePlacementDim === "placement") {
-        console.warn(LOG, "AUDIENCE+placement rejected; trying AUDIENCE+placement_type:", msg.slice(0, 260));
+      if (reportType === "BASIC") {
+        console.warn(LOG, "BASIC+placement+country rejected; trying AUDIENCE+placement+country:", msg.slice(0, 260));
         return fetchTikTokReportPages(
           apiBase,
           token,
@@ -267,14 +318,24 @@ async function fetchTikTokReportPages(
           true,
           METRICS_FULL,
           "AUDIENCE",
-          "placement_type",
+          "placement"
         );
       }
-      console.warn(
-        LOG,
-        "Placement breakdown unavailable; fetching ad/day without placement. API said:",
-        msg.slice(0, 280),
-      );
+      if (reportType === "AUDIENCE" && audiencePlacementDim === "placement") {
+        console.warn(LOG, "AUDIENCE+placement+country rejected; trying AUDIENCE+placement_type+country:", msg.slice(0, 260));
+        return fetchTikTokReportPages(
+          apiBase,
+          token,
+          advertiserId,
+          startDate,
+          endDate,
+          true,
+          METRICS_FULL,
+          "AUDIENCE",
+          "placement_type"
+        );
+      }
+      console.warn(LOG, "Placement+country breakdown unavailable; fetching ad/day/country only:", msg.slice(0, 280));
       return fetchTikTokReportPages(
         apiBase,
         token,
@@ -284,7 +345,7 @@ async function fetchTikTokReportPages(
         false,
         METRICS_FULL,
         "BASIC",
-        "placement",
+        "placement"
       );
     }
     throw new Error(`TikTok report code ${json.code}: ${msg || "unknown"}`);
@@ -300,7 +361,6 @@ async function fetchTikTokReportPages(
   } while (page <= totalPage);
 
   if (withPlacement && reportType === "BASIC" && out.length > 0 && !rowsHaveAnyPlacement(out)) {
-    console.warn(LOG, "BASIC report had no placement labels; trying AUDIENCE+placement", { rows: out.length });
     return fetchTikTokReportPages(
       apiBase,
       token,
@@ -310,11 +370,10 @@ async function fetchTikTokReportPages(
       true,
       METRICS_FULL,
       "AUDIENCE",
-      "placement",
+      "placement"
     );
   }
   if (withPlacement && reportType === "AUDIENCE" && audiencePlacementDim === "placement" && !rowsHaveAnyPlacement(out)) {
-    console.warn(LOG, "AUDIENCE+placement still blank; trying AUDIENCE+placement_type", { rows: out.length });
     return fetchTikTokReportPages(
       apiBase,
       token,
@@ -324,11 +383,10 @@ async function fetchTikTokReportPages(
       true,
       METRICS_FULL,
       "AUDIENCE",
-      "placement_type",
+      "placement_type"
     );
   }
   if (withPlacement && reportType === "AUDIENCE" && audiencePlacementDim === "placement_type" && !rowsHaveAnyPlacement(out)) {
-    console.warn(LOG, "Audience placement empty; falling back to ad/day without placement", { rows: out.length });
     return fetchTikTokReportPages(
       apiBase,
       token,
@@ -338,7 +396,7 @@ async function fetchTikTokReportPages(
       false,
       METRICS_FULL,
       "BASIC",
-      "placement",
+      "placement"
     );
   }
 
@@ -393,7 +451,7 @@ function rowToDb(
     total_purchase: totalPurchase,
     purchase_roas: roas,
     currency,
-    country: null,
+    country: pickCountry(d),
     product_type: null,
     show_event: null,
   };
@@ -418,7 +476,9 @@ Deno.serve(async (req: Request) => {
       let body: Record<string, unknown> = {};
       try {
         body = (await req.json()) as Record<string, unknown>;
-      } catch { /* empty */ }
+      } catch {
+        // Empty body uses default date range.
+      }
       const r = apply(
         body.date_from != null ? normalizeISODate(String(body.date_from)) : null,
         body.date_to != null ? normalizeISODate(String(body.date_to)) : null
@@ -457,7 +517,7 @@ Deno.serve(async (req: Request) => {
         currency = infoJson.data.list[0].currency;
       }
     } catch {
-      /* optional */
+      // Currency is optional metadata.
     }
 
     const rawList = await fetchTikTokReportPages(
@@ -478,14 +538,16 @@ Deno.serve(async (req: Request) => {
     const dedupe = new Map<string, Record<string, unknown>>();
     for (const r of rows) {
       const pl = r.placement != null ? String(r.placement) : "\0null";
-      const k = `${r.ad_id}\0${r.date}\0${pl}`;
+      const country = r.country != null ? String(r.country) : "unknown";
+      const k = `${r.ad_id}\0${r.date}\0${pl}\0${country}`;
       dedupe.set(k, r);
     }
     const uniqueRows = [...dedupe.values()];
 
-    console.log(LOG, "report rows", rawList.length, "unique", uniqueRows.length);
-
     const supabase = createClient(getEnv("SUPABASE_URL"), getEnv("SUPABASE_SERVICE_ROLE_KEY"));
+    const { error: seqErr } = await supabase.rpc("reset_tiktok_campaigns_data_country_sequence");
+    if (seqErr) console.warn(LOG, "tiktok_campaigns_data_country sequence", seqErr.message);
+
     const BATCH = 500;
     const stripId = <T extends Record<string, unknown>>(row: T) => {
       const { id: _i, ...rest } = row;
@@ -494,57 +556,50 @@ Deno.serve(async (req: Request) => {
 
     for (let i = 0; i < uniqueRows.length; i += BATCH) {
       const chunk = uniqueRows.slice(i, i + BATCH).map(stripId);
-      const { error } = await supabase.from("tiktok_campaigns_data").upsert(chunk, {
-        onConflict: "ad_id,date,placement",
+      const { error } = await supabase.from(TABLES.data).upsert(chunk, {
+        onConflict: "ad_id,date,placement,country",
         ignoreDuplicates: false,
       });
-      if (error) throw new Error(`tiktok_campaigns_data upsert: ${error.message}`);
-    }
-
-    const uniqueCampaignNames = [
-      ...new Set(uniqueRows.map((r) => (r.campaign_name as string)?.trim()).filter(Boolean)),
-    ];
-    if (uniqueCampaignNames.length > 0) {
-      const { data: existing } = await supabase
-        .from("tiktok_campaigns_reference_data")
-        .select("campaign_name")
-        .in("campaign_name", uniqueCampaignNames);
-      const existingSet = new Set((existing ?? []).map((r) => (r.campaign_name as string)?.trim()).filter(Boolean));
-      const toInsert = uniqueCampaignNames
-        .filter((n) => !existingSet.has(n))
-        .map((campaign_name) => ({ campaign_name }));
-      if (toInsert.length > 0) {
-        const { error: refErr } = await supabase.from("tiktok_campaigns_reference_data").insert(toInsert);
-        if (refErr) {
-          // Fail the run so missing reference campaigns are visible to operators.
-          const seqHint = refErr.message.includes("tiktok_campaigns_reference_data_pkey")
-            ? " Sequence may be out of sync; run setval on tiktok_campaigns_reference_data.id."
-            : "";
-          throw new Error(`tiktok_campaigns_reference_data insert: ${refErr.message}.${seqHint}`);
-        }
-      }
+      if (error) throw new Error(`${TABLES.data} upsert: ${error.message}`);
     }
 
     const accountKey = `tiktok_${advertiserId}`;
     const syncedAt = new Date().toISOString();
-    const rangeDates = eachDateInRange(dateFromStr, dateToStr);
-    const hist = rangeDates.map((segment_date) => ({
-      account_id: accountKey,
-      segment_date,
-      synced_at: syncedAt,
-    }));
+    const dates = eachDateInRange(dateFromStr, dateToStr);
+    const historyByKey = new Map<string, { account_id: string; segment_date: string; country: string }>();
+    for (const row of uniqueRows) {
+      const segmentDate = typeof row.date === "string" ? row.date : null;
+      const rowCountry = typeof row.country === "string" && row.country.trim() ? row.country.trim() : "unknown";
+      if (!segmentDate) continue;
+      historyByKey.set(`${accountKey}\0${segmentDate}\0${rowCountry}`, {
+        account_id: accountKey,
+        segment_date: segmentDate,
+        country: rowCountry,
+      });
+    }
+    if (historyByKey.size === 0) {
+      for (const segment_date of dates) {
+        historyByKey.set(`${accountKey}\0${segment_date}\0unknown`, {
+          account_id: accountKey,
+          segment_date,
+          country: "unknown",
+        });
+      }
+    }
+    const hist = [...historyByKey.values()].map((r) => ({ ...r, synced_at: syncedAt }));
     for (let i = 0; i < hist.length; i += BATCH) {
-      const { error } = await supabase.from("tiktok_ads_sync_by_date").upsert(hist.slice(i, i + BATCH), {
-        onConflict: "account_id,segment_date",
+      const { error } = await supabase.from(TABLES.syncHistory).upsert(hist.slice(i, i + BATCH), {
+        onConflict: "account_id,segment_date,country",
         ignoreDuplicates: false,
       });
-      if (error) console.warn(LOG, "tiktok_ads_sync_by_date", error.message);
+      if (error) throw new Error(`${TABLES.syncHistory} upsert: ${error.message}`);
     }
 
     const runId = crypto.randomUUID();
-    const logMeta = { report_rows: uniqueRows.length };
+    const countries = [...new Set(uniqueRows.map((r) => (typeof r.country === "string" ? r.country : null)).filter(Boolean))];
+    const logMeta = { report_rows: uniqueRows.length, countries };
     const logRows = hist.map((r) => ({
-      platform: "tiktok_ads",
+      platform: "tiktok_ads_country",
       account_id: r.account_id,
       segment_date: r.segment_date,
       synced_at: r.synced_at,
@@ -560,20 +615,35 @@ Deno.serve(async (req: Request) => {
 
     const result = {
       ok: true,
-      function: "fetch-tiktok-campaigns-upsert",
+      function: "fetch-tiktok-campaigns-upsert-country",
       advertiser_id: advertiserId,
       date_from: dateFromStr,
       date_to: dateToStr,
       upserted: { rows: uniqueRows.length },
       sync_history_rows: hist.length,
+      countries,
       run_id: runId,
     };
     console.log(LOG, JSON.stringify(result));
     return new Response(JSON.stringify(result), { status: 200, headers: { ...CORS, "Content-Type": "application/json" } });
   } catch (err) {
+    if (err instanceof HttpError) {
+      console.error(LOG, err.code, err.message);
+      return new Response(
+        JSON.stringify({
+          error: err.code,
+          message: err.message,
+          details: err.details ?? null,
+        }),
+        {
+          status: err.status,
+          headers: { ...CORS, "Content-Type": "application/json" },
+        },
+      );
+    }
     const message = err instanceof Error ? err.message : String(err);
     console.error(LOG, message);
-    return new Response(JSON.stringify({ error: "fetch_tiktok_campaigns_upsert_failed", message }), {
+    return new Response(JSON.stringify({ error: "fetch_tiktok_campaigns_upsert_country_failed", message }), {
       status: 500,
       headers: { ...CORS, "Content-Type": "application/json" },
     });

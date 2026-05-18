@@ -160,84 +160,13 @@ async function getClientCustomerIds(
   return clients;
 }
 
-async function getCampaignCountryMap(
-  accessToken: string,
-  customerId: string,
-  loginCustomerId: string,
-  developerToken: string
-): Promise<Map<string, string>> {
-  const locationQuery = `
-    SELECT
-      campaign.id,
-      campaign_criterion.location.geo_target_constant
-    FROM campaign_criterion
-    WHERE campaign_criterion.type = LOCATION
-      AND campaign_criterion.status != 'REMOVED'
-  `;
-  const locationRows = await searchStream(accessToken, customerId, locationQuery, loginCustomerId, developerToken);
-  const campaignToGeoResources = new Map<string, Set<string>>();
-  const allGeoResources = new Set<string>();
-
-  for (const row of locationRows) {
-    const campaign = (row.campaign as Record<string, unknown>) ?? {};
-    const criterion = (row.campaignCriterion as Record<string, unknown>) ?? {};
-    const location = (criterion.location as Record<string, unknown>) ?? {};
-    const campaignId = campaign.id != null ? String(campaign.id) : null;
-    const resourceName = location.geoTargetConstant != null ? String(location.geoTargetConstant) : null;
-    if (!campaignId || !resourceName) continue;
-    if (!campaignToGeoResources.has(campaignId)) campaignToGeoResources.set(campaignId, new Set<string>());
-    campaignToGeoResources.get(campaignId)?.add(resourceName);
-    allGeoResources.add(resourceName);
-  }
-
-  const geoResourceToCountry = new Map<string, string>();
-  const resources = [...allGeoResources];
-  const chunkSize = 200;
-  for (let i = 0; i < resources.length; i += chunkSize) {
-    const chunk = resources.slice(i, i + chunkSize);
-    const inList = chunk.map((v) => `'${v.replace(/'/g, "\\'")}'`).join(", ");
-    const geoQuery = `
-      SELECT
-        geo_target_constant.resource_name,
-        geo_target_constant.country_code
-      FROM geo_target_constant
-      WHERE geo_target_constant.resource_name IN (${inList})
-    `;
-    const geoRows = await searchStream(accessToken, customerId, geoQuery, loginCustomerId, developerToken);
-    for (const row of geoRows) {
-      const geo = (row.geoTargetConstant as Record<string, unknown>) ?? {};
-      const resourceName = geo.resourceName != null ? String(geo.resourceName) : null;
-      const countryCode = geo.countryCode != null ? String(geo.countryCode) : null;
-      if (resourceName && countryCode) geoResourceToCountry.set(resourceName, countryCode);
-    }
-  }
-
-  const campaignCountryMap = new Map<string, string>();
-  for (const [campaignId, geoSet] of campaignToGeoResources.entries()) {
-    for (const geoResource of geoSet) {
-      const country = geoResourceToCountry.get(geoResource);
-      if (country) {
-        campaignCountryMap.set(campaignId, country);
-        break;
-      }
-    }
-  }
-  return campaignCountryMap;
-}
-
-function toCampaignRow(
-  r: Record<string, unknown>,
-  customerId: string,
-  customerName: string,
-  campaignCountryMap?: Map<string, string>
-): Record<string, unknown> {
+function toCampaignRow(r: Record<string, unknown>, customerId: string, customerName: string): Record<string, unknown> {
   const campaign = (r.campaign as Record<string, unknown>) ?? {};
   const segments = (r.segments as Record<string, unknown>) ?? {};
   const metrics = (r.metrics as Record<string, unknown>) ?? {};
   const campaignBudget = (r.campaignBudget as Record<string, unknown>) ?? {};
   const customer = (r.customer as Record<string, unknown>) ?? {};
   const segDate = segments.date as string | undefined;
-  const campaignId = campaign.id != null ? String(campaign.id) : null;
   return {
     customer_id: customerId,
     customer_name: customerName,
@@ -270,7 +199,6 @@ function toCampaignRow(
     average_cpm: metrics.averageCpm ?? null,
     score: (campaign.optimizationScore as number) ?? null,
     network_type: (segments.adNetworkType as string) ?? null,
-    country: campaignId ? (campaignCountryMap?.get(campaignId) ?? null) : null,
   };
 }
 
@@ -438,7 +366,6 @@ Deno.serve(async (req: Request) => {
     const allKeywordRows: Record<string, unknown>[] = [];
 
     for (const customer of customers) {
-      const campaignCountryMap = await getCampaignCountryMap(accessToken, customer.id, loginCustomerId, developerToken);
       const [campaignRows, adGroupRows, keywordRows] = await Promise.all([
         searchStream(accessToken, customer.id, campaignQuery, loginCustomerId, developerToken),
         searchStream(accessToken, customer.id, adGroupQuery, loginCustomerId, developerToken),
@@ -453,12 +380,7 @@ Deno.serve(async (req: Request) => {
       );
       // Tag campaign rows with this customer for insert
       for (const r of campaignRows) {
-        allCampaignRows.push({
-          ...r,
-          __customerId: customer.id,
-          __customerName: customer.name,
-          __campaignCountryMap: campaignCountryMap,
-        });
+        allCampaignRows.push({ ...r, __customerId: customer.id, __customerName: customer.name });
       }
       for (const r of adGroupRows) {
         allAdGroupRows.push({ ...r, __customerId: customer.id });
@@ -471,12 +393,8 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     const campaignsPayload = allCampaignRows.map((r) => {
-      const { __customerId, __customerName, __campaignCountryMap, ...rest } = r as Record<string, unknown> & {
-        __customerId: string;
-        __customerName: string;
-        __campaignCountryMap?: Map<string, string>;
-      };
-      return toCampaignRow(rest, __customerId, __customerName, __campaignCountryMap);
+      const { __customerId, __customerName, ...rest } = r as Record<string, unknown> & { __customerId: string; __customerName: string };
+      return toCampaignRow(rest, __customerId, __customerName);
     });
     const adGroupsPayload = allAdGroupRows.map((r) => {
       const { __customerId, ...rest } = r as Record<string, unknown> & { __customerId: string };
@@ -530,59 +448,23 @@ Deno.serve(async (req: Request) => {
       if (error) throw new Error(`Campaigns insert: ${error.message}`);
     }
 
-    // Insert campaign_name + country into google_campaigns_reference_data if not already present.
-    const referenceRowsByName = new Map<string, { campaign_name: string; country: string | null }>();
-    for (const r of allCampaignRows) {
-      const row = r as Record<string, unknown> & { __campaignCountryMap?: Map<string, string> };
-      const campaign = (row.campaign as Record<string, unknown>) ?? {};
-      const rawName = campaign.name as string | undefined;
-      const campaignName = rawName?.trim();
-      if (!campaignName) continue;
-      const campaignId = campaign.id != null ? String(campaign.id) : null;
-      const derivedCountry = campaignId ? (row.__campaignCountryMap?.get(campaignId) ?? null) : null;
-      const existing = referenceRowsByName.get(campaignName);
-      if (!existing || (!existing.country && derivedCountry)) {
-        referenceRowsByName.set(campaignName, { campaign_name: campaignName, country: derivedCountry });
-      }
-    }
-
-    const referenceRows = [...referenceRowsByName.values()];
-    const referenceNames = referenceRows.map((r) => r.campaign_name);
-    if (referenceNames.length > 0) {
+    // Insert campaign_name into google_campaigns_reference_data if not already present
+    const uniqueCampaignNames = [...new Set(
+      campaignsPayload.map((r) => (r.campaign_name as string)?.trim()).filter(Boolean)
+    )];
+    if (uniqueCampaignNames.length > 0) {
       const { data: existing } = await supabase
         .from("google_campaigns_reference_data")
-        .select("id,campaign_name,country")
-        .in("campaign_name", referenceNames);
-      const existingByName = new Map(
-        (existing ?? [])
-          .map((row) => {
-            const name = (row.campaign_name as string)?.trim();
-            return name ? [name, row] as const : null;
-          })
-          .filter(Boolean) as [string, { id: number; campaign_name: string; country: string | null }][]
-      );
-      const toInsert = referenceRows.filter((row) => !existingByName.has(row.campaign_name));
+        .select("campaign_name")
+        .in("campaign_name", uniqueCampaignNames);
+      const existingSet = new Set((existing ?? []).map((r) => (r.campaign_name as string)?.trim()).filter(Boolean));
+      const toInsert = uniqueCampaignNames
+        .filter((name) => !existingSet.has(name))
+        .map((campaign_name) => ({ campaign_name }));
       if (toInsert.length > 0) {
         const { error: refErr } = await supabase.from("google_campaigns_reference_data").insert(toInsert);
         if (refErr) throw new Error(`Reference data insert: ${refErr.message}`);
         console.log("[sync-google-ads-data] Inserted", toInsert.length, "new campaign(s) into google_campaigns_reference_data");
-      }
-
-      const toUpdate = referenceRows
-        .map((row) => {
-          const existingRow = existingByName.get(row.campaign_name);
-          const existingCountry = existingRow?.country?.trim() || null;
-          const derivedCountry = row.country?.trim() || null;
-          if (!existingRow || existingCountry || !derivedCountry) return null;
-          return { id: existingRow.id, country: derivedCountry };
-        })
-        .filter(Boolean) as { id: number; country: string }[];
-      if (toUpdate.length > 0) {
-        const { error: updateErr } = await supabase
-          .from("google_campaigns_reference_data")
-          .upsert(toUpdate, { onConflict: "id", ignoreDuplicates: false });
-        if (updateErr) throw new Error(`Reference data country update: ${updateErr.message}`);
-        console.log("[sync-google-ads-data] Updated country for", toUpdate.length, "existing campaign(s) in google_campaigns_reference_data");
       }
     }
     for (let i = 0; i < adGroupsPayload.length; i += BATCH) {
