@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useMemo } from 'react';
+﻿import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
@@ -125,6 +125,310 @@ function fmtSyncAt(iso) {
   } catch {
     return iso;
   }
+}
+
+/**
+ * Group raw ads_sync_by_date_log rows by (run_id, account_id). Each invocation of an
+ * upsert edge function writes one row per segment_date sharing the same synced_at,
+ * date_range_start/end, and metadata, so the table is much more readable when those
+ * rows are collapsed into one expandable parent row.
+ */
+function groupSyncLogRows(rows) {
+  const map = new Map();
+  for (const row of rows ?? []) {
+    const fallback = `${row.synced_at}|${row.date_range_start}|${row.date_range_end}`;
+    const key = `${row.run_id ?? fallback}::${row.account_id}`;
+    let group = map.get(key);
+    if (!group) {
+      group = {
+        key,
+        syncedAt: row.synced_at,
+        accountId: row.account_id,
+        dateRangeStart: row.date_range_start,
+        dateRangeEnd: row.date_range_end,
+        metadata: row.metadata,
+        segmentDates: [],
+      };
+      map.set(key, group);
+    }
+    if (row.segment_date) group.segmentDates.push(row.segment_date);
+  }
+  const groups = Array.from(map.values());
+  for (const g of groups) g.segmentDates.sort();
+  groups.sort((a, b) => (a.syncedAt < b.syncedAt ? 1 : a.syncedAt > b.syncedAt ? -1 : 0));
+  return groups;
+}
+
+/**
+ * Shared sync-log table used by every settings panel that surfaces ads_sync_by_date_log.
+ * Rows are grouped by sync run so the user sees one summary row per invocation; clicking
+ * the row expands it to reveal the individual report dates that were synced.
+ */
+function SyncLogTable({ rows, loading, error, onRefresh, platform, emptyMessage }) {
+  const [expanded, setExpanded] = useState(() => new Set());
+  const groups = useMemo(() => groupSyncLogRows(rows), [rows]);
+
+  const toggle = (key) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  return (
+    <div className="wl-sync-log-section">
+      <div className="wl-sync-log-header">
+        <h3 className="wl-sync-log-title">Sync log</h3>
+        <button
+          type="button"
+          className="wl-btn wl-btn--outline wl-btn--sm"
+          onClick={onRefresh}
+          disabled={loading}
+        >
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+      {error && <p className="wl-sync-log-error">{error}</p>}
+      {!error && groups.length === 0 && !loading && (
+        <p className="wl-settings-desc">{emptyMessage}</p>
+      )}
+      {(groups.length > 0 || loading) && !error && (
+        <div className="wl-table-wrap wl-sync-log-table-wrap">
+          <table className="wl-settings-table wl-sync-log-table">
+            <thead>
+              <tr>
+                <th className="wl-sync-log-expand-col" aria-label="Expand" />
+                <th>Synced</th>
+                <th>Account</th>
+                <th>Report dates</th>
+                <th>Range synced</th>
+                <th>Rows / stats</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((group) => {
+                const isOpen = expanded.has(group.key);
+                const dateCount = group.segmentDates.length;
+                const dateSummary = dateCount === 0
+                  ? '—'
+                  : dateCount === 1
+                    ? group.segmentDates[0]
+                    : `${group.segmentDates[0]} → ${group.segmentDates[dateCount - 1]} (${dateCount} dates)`;
+                return (
+                  <Fragment key={group.key}>
+                    <tr
+                      className="wl-sync-log-group-row"
+                      onClick={() => toggle(group.key)}
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={isOpen}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          toggle(group.key);
+                        }
+                      }}
+                    >
+                      <td className="wl-sync-log-expand-cell">
+                        <span className={`wl-sync-log-caret${isOpen ? ' wl-sync-log-caret--open' : ''}`} aria-hidden="true">▶</span>
+                      </td>
+                      <td className="wl-td-mono">{fmtSyncAt(group.syncedAt)}</td>
+                      <td className="wl-td-mono">{group.accountId}</td>
+                      <td>{dateSummary}</td>
+                      <td className="wl-td-muted">
+                        {group.dateRangeStart && group.dateRangeEnd
+                          ? `${group.dateRangeStart} → ${group.dateRangeEnd}`
+                          : '—'}
+                      </td>
+                      <td className="wl-td-muted">{formatSyncLogStats(platform, group.metadata)}</td>
+                    </tr>
+                    {isOpen && group.segmentDates.map((segDate) => (
+                      <tr key={`${group.key}::${segDate}`} className="wl-sync-log-child-row">
+                        <td />
+                        <td />
+                        <td />
+                        <td>{segDate}</td>
+                        <td />
+                        <td />
+                      </tr>
+                    ))}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatDurationMs(ms) {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '—';
+  if (ms < 1000) return `${ms} ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 2 : 1)} s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds - m * 60);
+  return `${m}m ${s}s`;
+}
+
+/**
+ * Pick out the most useful fields from an edge-function response payload for the
+ * given platform. Returns an ordered list of { label, value } pairs that the
+ * SyncResultModal renders above the raw JSON dump.
+ */
+function buildSyncSummaryItems(platform, response) {
+  const items = [];
+  if (response == null) return items;
+  // Meta and any future chunked sync return an array (one entry per chunk).
+  const responses = Array.isArray(response) ? response : [response];
+
+  const sumNumber = (key) => {
+    let total = 0;
+    let found = false;
+    for (const r of responses) {
+      const v = r?.[key];
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        total += v;
+        found = true;
+      }
+    }
+    return found ? total : null;
+  };
+  const sumNested = (parent, key) => {
+    let total = 0;
+    let found = false;
+    for (const r of responses) {
+      const v = r?.[parent]?.[key];
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        total += v;
+        found = true;
+      }
+    }
+    return found ? total : null;
+  };
+  const collectIds = (...keys) => {
+    const set = new Set();
+    for (const r of responses) {
+      for (const k of keys) {
+        const v = r?.[k];
+        if (Array.isArray(v)) v.forEach((x) => set.add(String(x)));
+      }
+    }
+    return set.size ? Array.from(set).join(', ') : null;
+  };
+  const push = (label, value) => {
+    if (value == null || value === '') return;
+    items.push({ label, value });
+  };
+
+  if (platform === 'google_ads' || platform === 'google_ads_country') {
+    push('Customers synced', sumNumber('customers_synced'));
+    push('Customer IDs', collectIds('customer_ids'));
+    push('Campaigns', sumNested('upserted', 'campaigns') ?? sumNumber('campaigns'));
+    push('Ad groups', sumNested('upserted', 'ad_groups') ?? sumNumber('ad_groups'));
+    push('Keywords', sumNested('upserted', 'keywords') ?? sumNumber('keywords'));
+    push('Sync history rows', sumNumber('sync_history_rows'));
+  } else if (platform === 'reddit_ads' || platform === 'reddit_ads_country') {
+    push('Ad group rows', sumNumber('ad_group_rows'));
+    push('Placement rows', sumNumber('placement_rows'));
+    push('Accounts', collectIds('account_ids'));
+  } else if (platform === 'facebook_ads' || platform === 'facebook_ads_country') {
+    if (responses.length > 1) push('Chunks processed', responses.length);
+    push('Insight rows', sumNumber('insight_rows'));
+    push('Accounts', collectIds('account_ids', 'accounts'));
+  } else if (platform === 'tiktok_ads' || platform === 'tiktok_ads_country') {
+    push('Report rows', sumNumber('report_rows'));
+    push('Advertiser IDs', collectIds('advertiser_ids'));
+  } else if (platform === 'microsoft_ads' || platform === 'microsoft_ads_country') {
+    push('Ad group rows', sumNumber('ad_group_rows'));
+    push('Placement rows', sumNumber('placement_rows'));
+    push('Accounts', collectIds('account_ids', 'customer_ids'));
+  }
+
+  if (items.length === 0) {
+    for (const r of responses) {
+      if (!r || typeof r !== 'object') continue;
+      for (const [k, v] of Object.entries(r)) {
+        if (v == null) continue;
+        if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') {
+          push(k, String(v));
+        }
+      }
+    }
+  }
+  return items;
+}
+
+function SyncResultModal({ title, platform, result, onClose }) {
+  if (!result) return null;
+  const { success, dateFrom, dateTo, durationMs, response, error } = result;
+  const summary = buildSyncSummaryItems(platform, response);
+  let rawJson;
+  try {
+    rawJson = response === undefined ? '' : JSON.stringify(response, null, 2);
+  } catch {
+    rawJson = String(response);
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal-card wl-sync-result-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${title} sync result`}
+      >
+        <div className="wl-sync-result-modal__header">
+          <span className={`wl-sync-result-modal__badge wl-sync-result-modal__badge--${success ? 'success' : 'error'}`}>
+            {success ? 'Success' : 'Failed'}
+          </span>
+          <h3 className="wl-sync-result-modal__title">{title} sync</h3>
+        </div>
+
+        <div className="wl-sync-result-modal__meta">
+          <div>
+            <span className="wl-sync-result-modal__meta-label">Range</span>
+            <span className="wl-sync-result-modal__meta-value">{dateFrom} → {dateTo}</span>
+          </div>
+          <div>
+            <span className="wl-sync-result-modal__meta-label">Duration</span>
+            <span className="wl-sync-result-modal__meta-value">{formatDurationMs(durationMs)}</span>
+          </div>
+        </div>
+
+        {!success && error && (
+          <p className="wl-sync-result-modal__error">{error}</p>
+        )}
+
+        {summary.length > 0 && (
+          <dl className="wl-sync-result-modal__summary">
+            {summary.map((item) => (
+              <div key={item.label} className="wl-sync-result-modal__summary-row">
+                <dt>{item.label}</dt>
+                <dd>{item.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        {rawJson && (
+          <details className="wl-sync-result-modal__raw">
+            <summary>Raw response</summary>
+            <pre>{rawJson}</pre>
+          </details>
+        )}
+
+        <div className="modal-actions wl-sync-result-modal__actions">
+          <button type="button" className="btn-close-modal" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 const SETTINGS_NAV_BASE = [
@@ -372,6 +676,7 @@ function AdsPlatformPanel({ showNotification, title, connectDescription, onSync,
   const [logRows, setLogRows] = useState([]);
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState(null);
+  const [syncResult, setSyncResult] = useState(null);
 
   const loadSyncLog = useCallback(async () => {
     if (!syncLogPlatform) return;
@@ -407,12 +712,18 @@ function AdsPlatformPanel({ showNotification, title, connectDescription, onSync,
     }
     if (onSync) {
       setSyncing(true);
+      const startedAt = Date.now();
       try {
-        await onSync(startDate, endDate);
+        const response = await onSync(startDate, endDate);
+        const durationMs = Date.now() - startedAt;
         showNotification(`${title} sync completed.`);
+        setSyncResult({ success: true, dateFrom: startDate, dateTo: endDate, durationMs, response });
         loadSyncLog();
       } catch (e) {
-        showNotification(e?.message || String(e) || 'Sync failed.');
+        const durationMs = Date.now() - startedAt;
+        const message = e?.message || String(e) || 'Sync failed.';
+        showNotification(message);
+        setSyncResult({ success: false, dateFrom: startDate, dateTo: endDate, durationMs, response: e?.cause ?? null, error: message });
       } finally {
         setSyncing(false);
       }
@@ -464,49 +775,22 @@ function AdsPlatformPanel({ showNotification, title, connectDescription, onSync,
       </div>
 
       {syncLogPlatform && (
-        <div className="wl-sync-log-section">
-          <div className="wl-sync-log-header">
-            <h3 className="wl-sync-log-title">Sync log</h3>
-            <button type="button" className="wl-btn wl-btn--outline wl-btn--sm" onClick={loadSyncLog} disabled={logLoading}>
-              {logLoading ? 'Loading…' : 'Refresh'}
-            </button>
-          </div>
-          {logError && <p className="wl-sync-log-error">{logError}</p>}
-          {!logError && logRows.length === 0 && !logLoading && (
-            <p className="wl-settings-desc">No sync runs logged yet. Run a sync above — logs appear after a successful upsert.</p>
-          )}
-          {(logRows.length > 0 || logLoading) && !logError && (
-            <div className="wl-table-wrap wl-sync-log-table-wrap">
-              <table className="wl-settings-table wl-sync-log-table">
-                <thead>
-                  <tr>
-                    <th>Synced</th>
-                    <th>Account</th>
-                    <th>Report date</th>
-                    <th>Range synced</th>
-                    <th>Rows / stats</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {logRows.map((row) => (
-                    <tr key={`${row.run_id}-${row.account_id}-${row.segment_date}-${row.synced_at}`}>
-                      <td className="wl-td-mono">{fmtSyncAt(row.synced_at)}</td>
-                      <td className="wl-td-mono">{row.account_id}</td>
-                      <td>{row.segment_date}</td>
-                      <td className="wl-td-muted">
-                        {row.date_range_start && row.date_range_end
-                          ? `${row.date_range_start} → ${row.date_range_end}`
-                          : '—'}
-                      </td>
-                      <td className="wl-td-muted">{formatSyncLogStats(syncLogPlatform, row.metadata)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <SyncLogTable
+          rows={logRows}
+          loading={logLoading}
+          error={logError}
+          onRefresh={loadSyncLog}
+          platform={syncLogPlatform}
+          emptyMessage="No sync runs logged yet. Run a sync above — logs appear after a successful upsert."
+        />
       )}
+
+      <SyncResultModal
+        title={title}
+        platform={syncLogPlatform}
+        result={syncResult}
+        onClose={() => setSyncResult(null)}
+      />
     </div>
   );
 }
@@ -518,6 +802,7 @@ function GoogleAdsCountryPanel({ showNotification }) {
   const [logRows, setLogRows] = useState([]);
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState(null);
+  const [syncResult, setSyncResult] = useState(null);
 
   const loadSyncLog = useCallback(async () => {
     setLogLoading(true);
@@ -551,6 +836,7 @@ function GoogleAdsCountryPanel({ showNotification }) {
       return;
     }
     setSyncing(true);
+    const startedAt = Date.now();
     try {
       const { data, error } = await invokeEdgeFunction('sync-google-ads-data-country', {
         date_from: startDate,
@@ -558,10 +844,15 @@ function GoogleAdsCountryPanel({ showNotification }) {
       });
       if (error) throw new Error(error.message || 'Edge function error');
       if (data?.error) throw new Error(data.message || data.error);
+      const durationMs = Date.now() - startedAt;
       showNotification('Google Ads country sync completed.');
+      setSyncResult({ success: true, dateFrom: startDate, dateTo: endDate, durationMs, response: data });
       loadSyncLog();
     } catch (e) {
-      showNotification(e?.message || String(e) || 'Country sync failed.');
+      const durationMs = Date.now() - startedAt;
+      const message = e?.message || String(e) || 'Country sync failed.';
+      showNotification(message);
+      setSyncResult({ success: false, dateFrom: startDate, dateTo: endDate, durationMs, response: null, error: message });
     } finally {
       setSyncing(false);
     }
@@ -584,48 +875,21 @@ function GoogleAdsCountryPanel({ showNotification }) {
         </button>
       </div>
 
-      <div className="wl-sync-log-section">
-        <div className="wl-sync-log-header">
-          <h3 className="wl-sync-log-title">Sync log</h3>
-          <button type="button" className="wl-btn wl-btn--outline wl-btn--sm" onClick={loadSyncLog} disabled={logLoading}>
-            {logLoading ? 'LoadingΓÇª' : 'Refresh'}
-          </button>
-        </div>
-        {logError && <p className="wl-sync-log-error">{logError}</p>}
-        {!logError && logRows.length === 0 && !logLoading && (
-          <p className="wl-settings-desc">No country sync rows yet. Run a sync above.</p>
-        )}
-        {(logRows.length > 0 || logLoading) && !logError && (
-          <div className="wl-table-wrap wl-sync-log-table-wrap">
-            <table className="wl-settings-table wl-sync-log-table">
-              <thead>
-                <tr>
-                  <th>Synced</th>
-                  <th>Account</th>
-                  <th>Report date</th>
-                  <th>Range synced</th>
-                  <th>Rows / stats</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logRows.map((row) => (
-                  <tr key={`${row.run_id}-${row.account_id}-${row.segment_date}-${row.synced_at}`}>
-                    <td className="wl-td-mono">{fmtSyncAt(row.synced_at)}</td>
-                    <td className="wl-td-mono">{row.account_id}</td>
-                    <td>{row.segment_date}</td>
-                    <td className="wl-td-muted">
-                      {row.date_range_start && row.date_range_end
-                        ? `${row.date_range_start} ΓåÆ ${row.date_range_end}`
-                        : 'ΓÇö'}
-                    </td>
-                    <td className="wl-td-muted">{formatSyncLogStats('google_ads_country', row.metadata)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <SyncLogTable
+        rows={logRows}
+        loading={logLoading}
+        error={logError}
+        onRefresh={loadSyncLog}
+        platform="google_ads_country"
+        emptyMessage="No country sync rows yet. Run a sync above."
+      />
+
+      <SyncResultModal
+        title="Google Ads Country"
+        platform="google_ads_country"
+        result={syncResult}
+        onClose={() => setSyncResult(null)}
+      />
     </div>
   );
 }
@@ -637,6 +901,7 @@ function MetaAdsCountryPanel({ showNotification }) {
   const [logRows, setLogRows] = useState([]);
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState(null);
+  const [syncResult, setSyncResult] = useState(null);
 
   const loadSyncLog = useCallback(async () => {
     setLogLoading(true);
@@ -670,6 +935,7 @@ function MetaAdsCountryPanel({ showNotification }) {
       return;
     }
     setSyncing(true);
+    const startedAt = Date.now();
     try {
       const { data, error } = await invokeEdgeFunction('fetch-facebook-campaigns-upsert-country', {
         date_from: startDate,
@@ -677,10 +943,15 @@ function MetaAdsCountryPanel({ showNotification }) {
       });
       if (error) throw new Error(error.message || 'Edge function error');
       if (data?.error) throw new Error(data.message || data.error);
+      const durationMs = Date.now() - startedAt;
       showNotification('Facebook Ads country sync completed.');
+      setSyncResult({ success: true, dateFrom: startDate, dateTo: endDate, durationMs, response: data });
       loadSyncLog();
     } catch (e) {
-      showNotification(e?.message || String(e) || 'Country sync failed.');
+      const durationMs = Date.now() - startedAt;
+      const message = e?.message || String(e) || 'Country sync failed.';
+      showNotification(message);
+      setSyncResult({ success: false, dateFrom: startDate, dateTo: endDate, durationMs, response: null, error: message });
     } finally {
       setSyncing(false);
     }
@@ -703,48 +974,21 @@ function MetaAdsCountryPanel({ showNotification }) {
         </button>
       </div>
 
-      <div className="wl-sync-log-section">
-        <div className="wl-sync-log-header">
-          <h3 className="wl-sync-log-title">Sync log</h3>
-          <button type="button" className="wl-btn wl-btn--outline wl-btn--sm" onClick={loadSyncLog} disabled={logLoading}>
-            {logLoading ? 'LoadingΓÇª' : 'Refresh'}
-          </button>
-        </div>
-        {logError && <p className="wl-sync-log-error">{logError}</p>}
-        {!logError && logRows.length === 0 && !logLoading && (
-          <p className="wl-settings-desc">No Facebook country sync rows yet. Run a sync above.</p>
-        )}
-        {(logRows.length > 0 || logLoading) && !logError && (
-          <div className="wl-table-wrap wl-sync-log-table-wrap">
-            <table className="wl-settings-table wl-sync-log-table">
-              <thead>
-                <tr>
-                  <th>Synced</th>
-                  <th>Account</th>
-                  <th>Report date</th>
-                  <th>Range synced</th>
-                  <th>Rows / stats</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logRows.map((row) => (
-                  <tr key={`${row.run_id}-${row.account_id}-${row.segment_date}-${row.synced_at}`}>
-                    <td className="wl-td-mono">{fmtSyncAt(row.synced_at)}</td>
-                    <td className="wl-td-mono">{row.account_id}</td>
-                    <td>{row.segment_date}</td>
-                    <td className="wl-td-muted">
-                      {row.date_range_start && row.date_range_end
-                        ? `${row.date_range_start} ΓåÆ ${row.date_range_end}`
-                        : 'ΓÇö'}
-                    </td>
-                    <td className="wl-td-muted">{formatSyncLogStats('facebook_ads_country', row.metadata)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <SyncLogTable
+        rows={logRows}
+        loading={logLoading}
+        error={logError}
+        onRefresh={loadSyncLog}
+        platform="facebook_ads_country"
+        emptyMessage="No Facebook country sync rows yet. Run a sync above."
+      />
+
+      <SyncResultModal
+        title="Facebook Ads Country"
+        platform="facebook_ads_country"
+        result={syncResult}
+        onClose={() => setSyncResult(null)}
+      />
     </div>
   );
 }
@@ -756,6 +1000,7 @@ function RedditAdsCountryPanel({ showNotification }) {
   const [logRows, setLogRows] = useState([]);
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState(null);
+  const [syncResult, setSyncResult] = useState(null);
 
   const loadSyncLog = useCallback(async () => {
     setLogLoading(true);
@@ -789,6 +1034,7 @@ function RedditAdsCountryPanel({ showNotification }) {
       return;
     }
     setSyncing(true);
+    const startedAt = Date.now();
     try {
       const { data, error } = await invokeEdgeFunction('fetch-reddit-campaigns-upsert-country', {
         date_from: startDate,
@@ -796,10 +1042,15 @@ function RedditAdsCountryPanel({ showNotification }) {
       });
       if (error) throw new Error(error.message || 'Edge function error');
       if (data?.error) throw new Error(data.message || data.error);
+      const durationMs = Date.now() - startedAt;
       showNotification('Reddit Ads country sync completed.');
+      setSyncResult({ success: true, dateFrom: startDate, dateTo: endDate, durationMs, response: data });
       loadSyncLog();
     } catch (e) {
-      showNotification(e?.message || String(e) || 'Country sync failed.');
+      const durationMs = Date.now() - startedAt;
+      const message = e?.message || String(e) || 'Country sync failed.';
+      showNotification(message);
+      setSyncResult({ success: false, dateFrom: startDate, dateTo: endDate, durationMs, response: null, error: message });
     } finally {
       setSyncing(false);
     }
@@ -822,48 +1073,21 @@ function RedditAdsCountryPanel({ showNotification }) {
         </button>
       </div>
 
-      <div className="wl-sync-log-section">
-        <div className="wl-sync-log-header">
-          <h3 className="wl-sync-log-title">Sync log</h3>
-          <button type="button" className="wl-btn wl-btn--outline wl-btn--sm" onClick={loadSyncLog} disabled={logLoading}>
-            {logLoading ? 'LoadingΓÇª' : 'Refresh'}
-          </button>
-        </div>
-        {logError && <p className="wl-sync-log-error">{logError}</p>}
-        {!logError && logRows.length === 0 && !logLoading && (
-          <p className="wl-settings-desc">No Reddit country sync rows yet. Run a sync above.</p>
-        )}
-        {(logRows.length > 0 || logLoading) && !logError && (
-          <div className="wl-table-wrap wl-sync-log-table-wrap">
-            <table className="wl-settings-table wl-sync-log-table">
-              <thead>
-                <tr>
-                  <th>Synced</th>
-                  <th>Account</th>
-                  <th>Report date</th>
-                  <th>Range synced</th>
-                  <th>Rows / stats</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logRows.map((row) => (
-                  <tr key={`${row.run_id}-${row.account_id}-${row.segment_date}-${row.synced_at}`}>
-                    <td className="wl-td-mono">{fmtSyncAt(row.synced_at)}</td>
-                    <td className="wl-td-mono">{row.account_id}</td>
-                    <td>{row.segment_date}</td>
-                    <td className="wl-td-muted">
-                      {row.date_range_start && row.date_range_end
-                        ? `${row.date_range_start} ΓåÆ ${row.date_range_end}`
-                        : 'ΓÇö'}
-                    </td>
-                    <td className="wl-td-muted">{formatSyncLogStats('reddit_ads_country', row.metadata)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <SyncLogTable
+        rows={logRows}
+        loading={logLoading}
+        error={logError}
+        onRefresh={loadSyncLog}
+        platform="reddit_ads_country"
+        emptyMessage="No Reddit country sync rows yet. Run a sync above."
+      />
+
+      <SyncResultModal
+        title="Reddit Ads Country"
+        platform="reddit_ads_country"
+        result={syncResult}
+        onClose={() => setSyncResult(null)}
+      />
     </div>
   );
 }
@@ -875,6 +1099,7 @@ function TikTokAdsCountryPanel({ showNotification }) {
   const [logRows, setLogRows] = useState([]);
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState(null);
+  const [syncResult, setSyncResult] = useState(null);
 
   const loadSyncLog = useCallback(async () => {
     setLogLoading(true);
@@ -908,6 +1133,7 @@ function TikTokAdsCountryPanel({ showNotification }) {
       return;
     }
     setSyncing(true);
+    const startedAt = Date.now();
     try {
       const { data, error } = await invokeEdgeFunction('fetch-tiktok-campaigns-upsert-country', {
         date_from: startDate,
@@ -915,10 +1141,15 @@ function TikTokAdsCountryPanel({ showNotification }) {
       });
       if (error) throw new Error(error.message || 'Edge function error');
       if (data?.error) throw new Error(data.message || data.error);
+      const durationMs = Date.now() - startedAt;
       showNotification('TikTok Ads country sync completed.');
+      setSyncResult({ success: true, dateFrom: startDate, dateTo: endDate, durationMs, response: data });
       loadSyncLog();
     } catch (e) {
-      showNotification(e?.message || String(e) || 'Country sync failed.');
+      const durationMs = Date.now() - startedAt;
+      const message = e?.message || String(e) || 'Country sync failed.';
+      showNotification(message);
+      setSyncResult({ success: false, dateFrom: startDate, dateTo: endDate, durationMs, response: null, error: message });
     } finally {
       setSyncing(false);
     }
@@ -941,48 +1172,21 @@ function TikTokAdsCountryPanel({ showNotification }) {
         </button>
       </div>
 
-      <div className="wl-sync-log-section">
-        <div className="wl-sync-log-header">
-          <h3 className="wl-sync-log-title">Sync log</h3>
-          <button type="button" className="wl-btn wl-btn--outline wl-btn--sm" onClick={loadSyncLog} disabled={logLoading}>
-            {logLoading ? 'LoadingΓÇª' : 'Refresh'}
-          </button>
-        </div>
-        {logError && <p className="wl-sync-log-error">{logError}</p>}
-        {!logError && logRows.length === 0 && !logLoading && (
-          <p className="wl-settings-desc">No TikTok country sync rows yet. Run a sync above.</p>
-        )}
-        {(logRows.length > 0 || logLoading) && !logError && (
-          <div className="wl-table-wrap wl-sync-log-table-wrap">
-            <table className="wl-settings-table wl-sync-log-table">
-              <thead>
-                <tr>
-                  <th>Synced</th>
-                  <th>Account</th>
-                  <th>Report date</th>
-                  <th>Range synced</th>
-                  <th>Rows / stats</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logRows.map((row) => (
-                  <tr key={`${row.run_id}-${row.account_id}-${row.segment_date}-${row.synced_at}`}>
-                    <td className="wl-td-mono">{fmtSyncAt(row.synced_at)}</td>
-                    <td className="wl-td-mono">{row.account_id}</td>
-                    <td>{row.segment_date}</td>
-                    <td className="wl-td-muted">
-                      {row.date_range_start && row.date_range_end
-                        ? `${row.date_range_start} ΓåÆ ${row.date_range_end}`
-                        : 'ΓÇö'}
-                    </td>
-                    <td className="wl-td-muted">{formatSyncLogStats('tiktok_ads_country', row.metadata)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <SyncLogTable
+        rows={logRows}
+        loading={logLoading}
+        error={logError}
+        onRefresh={loadSyncLog}
+        platform="tiktok_ads_country"
+        emptyMessage="No TikTok country sync rows yet. Run a sync above."
+      />
+
+      <SyncResultModal
+        title="TikTok Ads Country"
+        platform="tiktok_ads_country"
+        result={syncResult}
+        onClose={() => setSyncResult(null)}
+      />
     </div>
   );
 }
@@ -1220,6 +1424,7 @@ export function SettingsPage() {
                   });
                   if (error) throw new Error(error.message || 'Edge function error');
                   if (data?.error) throw new Error(data.message || data.error);
+                  return data;
                 }}
               />
             )}
@@ -1239,6 +1444,7 @@ export function SettingsPage() {
                   });
                   if (error) throw new Error(error.message || 'Edge function error');
                   if (data?.error) throw new Error(data.message || data.error);
+                  return data;
                 }}
               />
             )}
@@ -1260,11 +1466,14 @@ export function SettingsPage() {
                 syncLogPlatform="facebook_ads"
                 onSync={async (dateFrom, dateTo) => {
                   const ranges = splitIsoDateRangeIntoChunks(dateFrom, dateTo, META_EDGE_SYNC_CHUNK_DAYS);
+                  const chunkResults = [];
                   for (const range of ranges) {
                     const { data, error } = await invokeEdgeFunction('fetch-facebook-campaigns-upsert', range);
                     if (error) throw new Error(error.message || 'Edge function error');
                     if (data?.error) throw new Error(data.message || data.error);
+                    chunkResults.push({ ...range, ...(data ?? {}) });
                   }
+                  return chunkResults;
                 }}
               />
             )}
@@ -1284,6 +1493,7 @@ export function SettingsPage() {
                   });
                   if (error) throw new Error(error.message || 'Edge function error');
                   if (data?.error) throw new Error(data.message || data.error);
+                  return data;
                 }}
               />
             )}
@@ -1303,6 +1513,7 @@ export function SettingsPage() {
                   });
                   if (error) throw new Error(error.message || 'Edge function error');
                   if (data?.error) throw new Error(data.message || data.error);
+                  return data;
                 }}
               />
             )}
@@ -1319,6 +1530,7 @@ export function SettingsPage() {
                   });
                   if (error) throw new Error(error.message || 'Edge function error');
                   if (data?.error) throw new Error(data.message || data.error);
+                  return data;
                 }}
               />
             )}
