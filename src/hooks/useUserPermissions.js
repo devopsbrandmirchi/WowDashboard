@@ -71,16 +71,7 @@ export function useUserPermissions() {
   }, [user?.id]);
 
   const canAccessSidebar = useCallback((navId) => {
-    const countryAliasToBase = {
-      'google-ads-country': 'google-ads',
-      'meta-ads-country': 'meta-ads',
-      'bing-ads-country': 'bing-ads',
-      'tiktok-ads-country': 'tiktok-ads',
-      'reddit-ads-country': 'reddit-ads',
-    };
-    const baseNavId = countryAliasToBase[navId];
     const key = `sidebar:${navId}`;
-    const baseKey = baseNavId ? `sidebar:${baseNavId}` : null;
     const limitedRoleSlugs = ['viewer', 'employee', 'editor'];
     const isLimitedRole = (role && limitedRoleSlugs.includes(role)) || (roleId && LIMITED_ROLE_IDS.includes(roleId));
 
@@ -91,9 +82,7 @@ export function useUserPermissions() {
       return !['users', 'settings', 'maintenance', 'google-campaigns-reference', 'reddit-campaigns-reference', 'tiktok-campaigns-reference', 'facebook-campaigns-reference', 'facebook-adset-reference', 'microsoft-campaigns-reference'].includes(navId);
     }
     if (permissions.length > 0) {
-      if (permissions.includes(key)) return true;
-      if (baseKey && permissions.includes(baseKey)) return true;
-      return false;
+      return permissions.includes(key);
     }
     return true;
   }, [role, roleId, permissions]);
