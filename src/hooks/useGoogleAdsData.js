@@ -1,7 +1,26 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, invokeEdgeFunction } from '../lib/supabase';
+import { num, costFromMicros, toDayKey, addMetrics, aggregateDailyFromRows } from '../utils/googleAdsAggregate';
 
 const PAGE_SIZE = 1000;
+
+/** Stable sort required for offset pagination (segment_date alone duplicates/skips rows). */
+function campaignDataQuery(base) {
+  return base
+    .order('segment_date', { ascending: false })
+    .order('id', { ascending: true });
+}
+
+function dedupeCampaignRows(rows) {
+  const m = new Map();
+  for (const r of rows) {
+    const d = toDayKey(r.segment_date) ?? '';
+    const k = `${r.customer_id}\0${r.campaign_id}\0${d}\0${r.network_type ?? ''}`;
+    const prev = m.get(k);
+    if (!prev || (num(r.id) > num(prev.id))) m.set(k, r);
+  }
+  return [...m.values()];
+}
 
 async function fetchAllRows(queryFactory) {
   const results = [];
@@ -12,7 +31,7 @@ async function fetchAllRows(queryFactory) {
     if (!data || data.length === 0) break;
     results.push(...data);
     if (data.length < PAGE_SIZE) break;
-    offset += PAGE_SIZE;
+    offset += data.length;
   }
   return results;
 }
@@ -53,24 +72,7 @@ function computePreviousPeriod(fromStr, toStr) {
   return { from: fmtLocal(prevFrom), to: fmtLocal(prevTo) };
 }
 
-function num(v) { return Number(v) || 0; }
-function costFromMicros(v) { return num(v) / 1e6; }
-
-function toDayKey(v) {
-  if (v == null || v === '') return null;
-  if (typeof v === 'string' && v.length >= 10 && v[4] === '-' && v[7] === '-') return v.slice(0, 10);
-  const d = new Date(v);
-  if (isNaN(d.getTime())) return null;
-  return fmtLocal(d);
-}
-
-function addMetrics(o) {
-  o.ctr = o.impressions ? (o.clicks / o.impressions) * 100 : 0;
-  o.cpc = o.clicks ? o.cost / o.clicks : 0;
-  o.conv_rate = o.clicks ? (o.conversions / o.clicks) * 100 : 0;
-  o.cpa = o.conversions ? o.cost / o.conversions : 0;
-  return o;
-}
+const FILTER_REFETCH_DEBOUNCE_MS = 400;
 
 export function useGoogleAdsData() {
   const [filters, setFilters] = useState({
@@ -89,8 +91,11 @@ export function useGoogleAdsData() {
   const [channelTypes, setChannelTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
 
   const optionsLoaded = useRef(false);
+  const skipFilterRefetch = useRef(true);
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
 
@@ -111,7 +116,7 @@ export function useGoogleAdsData() {
       const hasCampaignFilters = f.customerId !== 'ALL' || f.channelType !== 'all' || f.status !== 'all' || f.campaignSearch;
 
       const buildCampaignQuery = (dateFrom, dateTo) => () => {
-        let q = supabase.from('google_campaigns_data').select('*').order('segment_date', { ascending: false });
+        let q = campaignDataQuery(supabase.from('google_campaigns_data').select('*'));
         if (dateFrom) q = q.gte('segment_date', dateFrom);
         if (dateTo) q = q.lte('segment_date', dateTo);
         if (f.customerId !== 'ALL') q = q.eq('customer_id', f.customerId);
@@ -138,14 +143,14 @@ export function useGoogleAdsData() {
       const fetches = [
         fetchAllRows(buildCampaignQuery(from, to)),
         fetchAllRows(() => {
-          let q = supabase.from('google_ad_groups_data').select('*').order('segment_date', { ascending: false });
+          let q = supabase.from('google_ad_groups_data').select('*').order('segment_date', { ascending: false }).order('id', { ascending: true });
           if (from) q = q.gte('segment_date', from);
           if (to) q = q.lte('segment_date', to);
           if (f.adGroupSearch) q = q.ilike('ad_group_name', `%${f.adGroupSearch}%`);
           return q;
         }),
         fetchAllRows(() => {
-          let q = supabase.from('google_keywords_data').select('*').order('segment_date', { ascending: false });
+          let q = supabase.from('google_keywords_data').select('*').order('segment_date', { ascending: false }).order('id', { ascending: true });
           if (from) q = q.gte('segment_date', from);
           if (to) q = q.lte('segment_date', to);
           if (f.keywordSearch) q = q.ilike('keyword_text', `%${f.keywordSearch}%`);
@@ -159,8 +164,10 @@ export function useGoogleAdsData() {
       }
 
       const results = await Promise.all(fetches);
-      const [campaignData, adGroupData, keywordData, refCampaignRes] = results;
-      const compareCampaignData = results[4] || [];
+      const [campaignDataRaw, adGroupData, keywordData, refCampaignRes] = results;
+      const compareCampaignDataRaw = results[4] || [];
+      const campaignData = dedupeCampaignRows(campaignDataRaw);
+      const compareCampaignData = dedupeCampaignRows(compareCampaignDataRaw);
 
       let filteredAdGroups = adGroupData;
       let filteredKeywords = keywordData;
@@ -175,6 +182,50 @@ export function useGoogleAdsData() {
       setRawKeywords(filteredKeywords);
       setCampaignRef(refCampaignRes || []);
       setRawCompareCampaigns(f.compareOn ? compareCampaignData : []);
+
+      if (from && to) {
+        const { data: syncRows, error: syncErr } = await supabase
+          .from('google_ads_sync_by_date')
+          .select('segment_date, synced_at, customer_id')
+          .gte('segment_date', from)
+          .lte('segment_date', to)
+          .order('synced_at', { ascending: false });
+        if (!syncErr && syncRows?.length) {
+          const byDate = new Map();
+          syncRows.forEach((row) => {
+            const d = toDayKey(row.segment_date);
+            if (!d) return;
+            const t = new Date(row.synced_at).getTime();
+            const prev = byDate.get(d);
+            if (!prev || t > prev.latest) {
+              byDate.set(d, { latest: t, synced_at: row.synced_at });
+            }
+          });
+          const dates = [];
+          let cursor = new Date(from + 'T00:00:00');
+          const end = new Date(to + 'T00:00:00');
+          while (cursor <= end) {
+            dates.push(fmtLocal(cursor));
+            cursor.setDate(cursor.getDate() + 1);
+          }
+          const missing = dates.filter((d) => !byDate.has(d));
+          const latestEntries = [...byDate.values()].map((v) => new Date(v.synced_at).getTime());
+          const oldestSync = latestEntries.length ? new Date(Math.min(...latestEntries)) : null;
+          const newestSync = latestEntries.length ? new Date(Math.max(...latestEntries)) : null;
+          setSyncStatus({
+            from,
+            to,
+            byDate: Object.fromEntries([...byDate.entries()].map(([d, v]) => [d, v.synced_at])),
+            missingDates: missing,
+            oldestSync: oldestSync?.toISOString() ?? null,
+            newestSync: newestSync?.toISOString() ?? null,
+          });
+        } else {
+          setSyncStatus(from && to ? { from, to, byDate: {}, missingDates: [], oldestSync: null, newestSync: null } : null);
+        }
+      } else {
+        setSyncStatus(null);
+      }
 
       if (!optionsLoaded.current && campaignData.length > 0) {
         const custMap = new Map();
@@ -198,6 +249,44 @@ export function useGoogleAdsData() {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  useEffect(() => {
+    if (skipFilterRefetch.current) {
+      skipFilterRefetch.current = false;
+      return;
+    }
+    const t = setTimeout(() => fetchData(), FILTER_REFETCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [
+    filters.channelType,
+    filters.status,
+    filters.campaignSearch,
+    filters.adGroupSearch,
+    filters.keywordSearch,
+    fetchData,
+  ]);
+
+  const resyncDateRange = useCallback(async () => {
+    const f = filtersRef.current;
+    const { from, to } = computeDateRange(f.datePreset, f.dateFrom, f.dateTo);
+    if (!from || !to) {
+      throw new Error('Select a date range before resyncing.');
+    }
+    setSyncing(true);
+    setError(null);
+    try {
+      const { data, error: fnErr } = await invokeEdgeFunction('sync-google-ads-upsert', {
+        date_from: from,
+        date_to: to,
+      });
+      if (fnErr) throw fnErr;
+      if (data?.error) throw new Error(data.message || data.error);
+      await fetchData();
+      return data;
+    } finally {
+      setSyncing(false);
+    }
+  }, [fetchData]);
 
   /** Reference map keyed by campaign_name (google_campaigns_reference_data has id, campaign_name, country, product_type, showname) */
   const campaignRefMap = useMemo(() => {
@@ -376,16 +465,7 @@ export function useGoogleAdsData() {
     return [...map.values()].map(addMetrics).sort((a, b) => b.cost - a.cost);
   }, [rawCampaigns, getRef]);
 
-  const dailyTrends = useMemo(() => {
-    const map = new Map();
-    rawCampaigns.forEach((r) => {
-      const d = toDayKey(r.segment_date); if (!d) return;
-      if (!map.has(d)) map.set(d, { date: d, cost: 0, clicks: 0, impressions: 0, conversions: 0 });
-      const a = map.get(d);
-      a.cost += costFromMicros(r.cost_micros); a.clicks += num(r.clicks); a.impressions += num(r.impressions); a.conversions += num(r.conversions);
-    });
-    return [...map.values()].map(addMetrics).sort((a, b) => a.date.localeCompare(b.date));
-  }, [rawCampaigns]);
+  const dailyTrends = useMemo(() => aggregateDailyFromRows(rawCampaigns), [rawCampaigns]);
 
   const compareKpis = useMemo(() => {
     if (!rawCompareCampaigns.length) return null;
@@ -435,9 +515,38 @@ export function useGoogleAdsData() {
     }));
   }, [dailyTrends]);
 
+  const activeDateRange = useMemo(
+    () => computeDateRange(filters.datePreset, filters.dateFrom, filters.dateTo),
+    [filters.datePreset, filters.dateFrom, filters.dateTo]
+  );
+
+  const isSingleDayRange = Boolean(
+    activeDateRange.from && activeDateRange.to && activeDateRange.from === activeDateRange.to
+  );
+
+  const kpiMatchesDayBreakdown = useMemo(() => {
+    if (!kpis || !dayData.length) return true;
+    const sum = dayData.reduce(
+      (a, d) => ({
+        cost: a.cost + d.cost,
+        clicks: a.clicks + d.clicks,
+        impressions: a.impressions + d.impressions,
+        conversions: a.conversions + d.conversions,
+      }),
+      { cost: 0, clicks: 0, impressions: 0, conversions: 0 }
+    );
+    return (
+      Math.abs(kpis.cost - sum.cost) < 0.02
+      && kpis.clicks === sum.clicks
+      && kpis.impressions === sum.impressions
+      && Math.abs(kpis.conversions - sum.conversions) < 0.01
+    );
+  }, [kpis, dayData]);
+
   return {
-    filters, updateFilter, batchUpdateFilters, fetchData,
-    loading, error, customers, channelTypes,
+    filters, updateFilter, batchUpdateFilters, fetchData, resyncDateRange,
+    loading, syncing, error, syncStatus, customers, channelTypes,
+    activeDateRange, isSingleDayRange, kpiMatchesDayBreakdown,
     kpis, compareKpis, campaignTypes: campaignTypesAgg, campaigns: campaignsAgg,
     adGroups: adGroupsAgg, keywords: keywordsAgg,
     geoData: geoAgg, conversionsData: conversionsAgg, dailyTrends, compareDailyTrends,

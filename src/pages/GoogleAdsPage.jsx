@@ -160,7 +160,15 @@ function SortTh({ label, col, sort, onSort, align }) {
 /* ──────────────── MAIN COMPONENT ──────────────── */
 export function GoogleAdsPage() {
   const { branding, registerExportPdf } = useApp();
-  const { filters, updateFilter, batchUpdateFilters, fetchData, loading, error, channelTypes, kpis, compareKpis, campaignTypes, campaigns, adGroups, keywords, geoData, countryData, productData, showsData, dayData, conversionsData, dailyTrends, compareDailyTrends } = useGoogleAdsData();
+  const {
+    filters, updateFilter, batchUpdateFilters, fetchData, resyncDateRange,
+    loading, syncing, error, syncStatus, channelTypes, kpis, compareKpis,
+    campaignTypes, campaigns, adGroups, keywords, geoData, countryData, productData,
+    showsData, dayData, conversionsData, dailyTrends, compareDailyTrends, rowCounts,
+    activeDateRange, isSingleDayRange, kpiMatchesDayBreakdown,
+  } = useGoogleAdsData();
+
+  const [resyncError, setResyncError] = useState(null);
 
   const [activeTab, setActiveTab] = useState('campaigntypes');
   const [kpiCollapsed, setKpiCollapsed] = useState(false);
@@ -209,7 +217,47 @@ export function GoogleAdsPage() {
     setExpanded((prev) => { const n = { ...prev }; if (n[key]) delete n[key]; else n[key] = true; return n; });
   }, []);
 
-  const handleApply = () => { setPg({ campaigntypes: 1, campaigns: 1, adgroups: 1, keywords: 1, country: 1, product: 1, shows: 1, day: 1 }); setExpanded({}); fetchData(); };
+  const handleApply = () => {
+    setPg({ campaigntypes: 1, campaigns: 1, adgroups: 1, keywords: 1, country: 1, product: 1, shows: 1, day: 1 });
+    setExpanded({});
+    fetchData();
+  };
+
+  const handleResyncRange = async () => {
+    setResyncError(null);
+    try {
+      await resyncDateRange();
+    } catch (err) {
+      setResyncError(err.message || 'Resync failed');
+    }
+  };
+
+  const formatSyncTime = (iso) => {
+    if (!iso) return null;
+    try {
+      return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    } catch {
+      return iso;
+    }
+  };
+
+  const dateRangeLabel = getDateRangeLabel(filters.datePreset, filters.dateFrom, filters.dateTo);
+  const kpiScopeHint = isSingleDayRange
+    ? `KPI cards and Day tab both show ${dateRangeLabel}.`
+    : `KPI cards total the full range (${dateRangeLabel}, ${dayData.length} days). Each Day tab row is one date—the Total row is the period sum, not a single day.`;
+
+  const syncStatusLine = (() => {
+    if (!syncStatus?.from) return null;
+    const { from, to, newestSync, oldestSync, missingDates } = syncStatus;
+    if (from === to) {
+      const t = formatSyncTime(syncStatus.byDate?.[from]);
+      return `Last synced (${from}): ${t || 'Never synced'}`;
+    }
+    const staleNote = missingDates?.length
+      ? ` · ${missingDates.length} day(s) never synced in range`
+      : '';
+    return `Sync coverage ${from}–${to}: ${formatSyncTime(oldestSync) || '?'} – ${formatSyncTime(newestSync) || '?'}${staleNote}`;
+  })();
 
   const handleDatePickerApply = useCallback(({ preset, dateFrom, dateTo, compareOn, compareFrom, compareTo }) => {
     batchUpdateFilters({
@@ -448,7 +496,13 @@ export function GoogleAdsPage() {
     return `${months[m - 1]} ${String(d).padStart(2, '0')}, ${y}`;
   };
   const dayCols = [
-    { col: 'date', label: 'Day', dim: true, cell: (r) => formatDayDisplay(r.date), total: () => 'Total' },
+    {
+      col: 'date',
+      label: 'Day',
+      dim: true,
+      cell: (r) => formatDayDisplay(r.date),
+      total: () => (isSingleDayRange ? 'Total' : `Period total (${dayData?.length || 0} days)`),
+    },
     { col: 'cost', label: 'Cost', align: 'r', cell: (r) => fU(r.cost), total: (t) => fU(t.cost) },
     { col: 'impressions', label: 'Impressions', align: 'r', cell: (r) => fI(r.impressions), total: (t) => fI(t.impressions) },
     { col: 'clicks', label: 'Clicks', align: 'r', cell: (r) => fI(r.clicks), total: (t) => fI(t.clicks) },
@@ -671,11 +725,27 @@ export function GoogleAdsPage() {
             <div className="gads-filter-group gads-fg-sm"><label>Keyword</label>
               <input type="text" placeholder="Search keywords..." className="gads-search-input" value={filters.keywordSearch} onChange={(e) => updateFilter('keywordSearch', e.target.value)} />
             </div>
-            <div className="gads-filter-group gads-filter-actions" style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
-              <button type="button" className="btn btn-navy btn-sm" onClick={handleApply} disabled={loading} style={{ padding: '6px 20px' }}>{loading ? 'Loading…' : 'Apply'}</button>
-              <span style={{ color: loading ? 'var(--warning)' : error ? 'var(--danger)' : 'var(--accent)', fontWeight: 600, fontSize: 11, whiteSpace: 'nowrap' }}>{loading ? 'Loading…' : error ? 'Error' : 'Live'}</span>
+            <div className="gads-filter-group gads-filter-actions" style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+              <button type="button" className="btn btn-navy btn-sm" onClick={handleApply} disabled={loading || syncing} style={{ padding: '6px 20px' }}>{loading ? 'Loading…' : 'Refresh'}</button>
+              <button type="button" className="btn btn-outline btn-sm" onClick={handleResyncRange} disabled={loading || syncing} title="Pull latest data from Google Ads for the selected date range">
+                {syncing ? 'Syncing…' : 'Resync range'}
+              </button>
+              <span style={{ color: loading || syncing ? 'var(--warning)' : error ? 'var(--danger)' : 'var(--accent)', fontWeight: 600, fontSize: 11, whiteSpace: 'nowrap' }}>{syncing ? 'Syncing…' : loading ? 'Loading…' : error ? 'Error' : 'Live'}</span>
             </div>
           </div>
+          {(syncStatusLine || rowCounts?.campaigns != null) && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+              {syncStatusLine && <span>{syncStatusLine}</span>}
+              {rowCounts?.campaigns != null && !loading && (
+                <span title="Raw campaign rows loaded for the selected range (includes network splits)">
+                  {fI(rowCounts.campaigns)} campaign rows loaded
+                </span>
+              )}
+            </div>
+          )}
+          {resyncError && (
+            <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 6 }}>{resyncError}</div>
+          )}
         </div>
 
         {error && (
@@ -687,6 +757,17 @@ export function GoogleAdsPage() {
 
         {/* ── KPI Section (6-card customizable grid) ── */}
         <div className="gads-kpi-section">
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8, fontWeight: 500 }}>
+            {dateRangeLabel}
+            {!loading && (
+              <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> — {kpiScopeHint}</span>
+            )}
+          </div>
+          {!loading && !kpiMatchesDayBreakdown && (
+            <div style={{ fontSize: 11, color: 'var(--warning)', marginBottom: 8, padding: '8px 12px', background: 'rgba(245, 166, 35, 0.12)', borderRadius: 6 }}>
+              Day breakdown does not sum to KPI totals. Click <strong>Refresh</strong> or <strong>Resync range</strong> to reload.
+            </div>
+          )}
           <div className="gads-kpi-toolbar">
             <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }}>Click metric name to customize</span>
             <button className="btn btn-outline btn-sm" onClick={() => setKpiCollapsed(!kpiCollapsed)}>{kpiCollapsed ? 'Show KPIs ▼' : 'Hide KPIs ▲'}</button>
