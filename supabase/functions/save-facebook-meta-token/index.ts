@@ -1,8 +1,11 @@
 // Meta/Facebook: GET status + app id hint (any auth user). POST merge row (Super Admin / Admin only).
 // POST JSON (any subset): { access_token?: string, fb_app_id?: string, fb_app_secret?: string }.
 // access_token: min 20 chars, or empty string to clear. fb_app_secret: omit or blank to keep existing.
+// When saving access_token, exchanges short-lived tokens for long-lived when app credentials are available.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+
+const GRAPH_VERSION = "v21.0";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -34,6 +37,56 @@ async function isSuperAdminOrAdmin(admin: ReturnType<typeof createClient>, userI
   const { data: roleRow, error: roleErr } = await admin.from("roles").select("name").eq("id", profile.role_id).maybeSingle();
   if (roleErr || !roleRow?.name) return false;
   return roleRow.name === "super_admin" || roleRow.name === "admin";
+}
+
+async function graphGetToken(params: Record<string, string>): Promise<{ access_token?: string; error?: { message?: string } }> {
+  const u = new URL(`https://graph.facebook.com/${GRAPH_VERSION}/oauth/access_token`);
+  for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
+  const res = await fetch(u.toString(), { method: "GET" });
+  const json = (await res.json()) as { access_token?: string; error?: { message?: string } };
+  if (!res.ok || json.error) {
+    const msg = json.error?.message || `${res.status} token exchange failed`;
+    throw new Error(msg);
+  }
+  return json;
+}
+
+async function resolveAppCredentials(
+  existing: { fb_app_id?: unknown; fb_app_secret?: unknown } | null,
+  body: Record<string, unknown>
+): Promise<{ appId: string; appSecret: string }> {
+  const fromDbId = existing?.fb_app_id != null ? String(existing.fb_app_id).trim() : "";
+  const fromDbSecret = existing?.fb_app_secret != null ? String(existing.fb_app_secret).trim() : "";
+  const bodyId = "fb_app_id" in body && typeof body.fb_app_id === "string" ? body.fb_app_id.trim() : "";
+  const bodySecret =
+    typeof body.fb_app_secret === "string" && body.fb_app_secret.trim().length > 0
+      ? body.fb_app_secret.trim()
+      : "";
+  const appId = bodyId || fromDbId || Deno.env.get("FB_APP_ID")?.trim() || "";
+  const appSecret = bodySecret || fromDbSecret || Deno.env.get("FB_APP_SECRET")?.trim() || "";
+  return { appId, appSecret };
+}
+
+async function exchangeForLongLivedToken(
+  shortToken: string,
+  appId: string,
+  appSecret: string
+): Promise<{ token: string; exchanged: boolean }> {
+  if (!appId || !appSecret) return { token: shortToken, exchanged: false };
+  try {
+    const longJson = await graphGetToken({
+      grant_type: "fb_exchange_token",
+      client_id: appId,
+      client_secret: appSecret,
+      fb_exchange_token: shortToken,
+    });
+    if (longJson.access_token && longJson.access_token.length >= 20) {
+      return { token: longJson.access_token, exchanged: true };
+    }
+  } catch (e) {
+    console.warn("[save-facebook-meta-token] long-lived exchange skipped:", e instanceof Error ? e.message : e);
+  }
+  return { token: shortToken, exchanged: false };
 }
 
 Deno.serve(async (req: Request) => {
@@ -134,6 +187,7 @@ Deno.serve(async (req: Request) => {
       updated_at: new Date().toISOString(),
     };
 
+    let exchangedToLongLived = false;
     if ("access_token" in body) {
       const t = typeof body.access_token === "string" ? body.access_token.trim() : "";
       if (t.length > 0 && t.length < 20) {
@@ -142,7 +196,14 @@ Deno.serve(async (req: Request) => {
           400
         );
       }
-      next.access_token = t;
+      if (t.length >= 20) {
+        const { appId, appSecret } = await resolveAppCredentials(existing, body);
+        const { token, exchanged } = await exchangeForLongLivedToken(t, appId, appSecret);
+        next.access_token = token;
+        exchangedToLongLived = exchanged;
+      } else {
+        next.access_token = t;
+      }
     }
 
     if ("fb_app_id" in body) {
@@ -168,9 +229,18 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const savedToken = next.access_token.trim().length >= 20;
+    let message = "Meta integration settings saved. Syncs read app credentials from this row before FB_APP_ID / FB_APP_SECRET secrets.";
+    if ("access_token" in body && savedToken) {
+      message = exchangedToLongLived
+        ? "Meta access token saved (exchanged for long-lived token). You can run sync now."
+        : "Meta access token saved. You can run sync now.";
+    }
+
     return jsonRes({
       ok: true,
-      message: "Meta integration settings saved. Syncs read app credentials from this row before FB_APP_ID / FB_APP_SECRET secrets.",
+      message,
+      exchanged_to_long_lived: exchangedToLongLived,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
