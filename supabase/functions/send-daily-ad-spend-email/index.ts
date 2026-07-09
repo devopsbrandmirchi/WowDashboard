@@ -21,8 +21,8 @@ import { renderDailyAdSpendEmailHtml } from "./dailyAdSpendEmailTemplate.ts";
 const REPORT_TIMEZONE = "Asia/Kolkata";
 /** Google Workspace / Gmail SMTP — edit here (do not push real passwords to public repositories). */
 const SMTP_USER = "adops@chipperdigital.io";
-/** 16-character app password; spaces are removed automatically. */
-const SMTP_PASS = "lgrt vudh gcyj tzfu";
+/** 16-character app password; spaces are removed automatically. Prefer Edge secret SMTP_PASS when set. */
+const SMTP_PASS = "";
 /** Primary recipient(s) for the daily digest (comma-separated). */
 const DAILY_SPEND_EMAIL_TO = "kiran@brandmirchi.com,darshna@chipperdigital.io";
 /** CC recipient(s) for all daily emails (comma-separated). */
@@ -107,12 +107,12 @@ function defaultReportDate(): string {
   return previousCalendarDate(todayInIndia);
 }
 
-/** In-file constants, else Edge secrets (so app password is not required in git). */
+/** Edge secrets first, then in-file constants (keeps passwords out of git). */
 function resolvedSmtpAuth(): { user: string; pass: string } {
-  const user = SMTP_USER.trim() || Deno.env.get("SMTP_USER")?.trim() || "";
-  const passInline = SMTP_PASS.replace(/\s+/g, "").trim();
+  const user = Deno.env.get("SMTP_USER")?.trim() || SMTP_USER.trim();
   const passEnv = (Deno.env.get("SMTP_PASS") ?? "").replace(/\s+/g, "").trim();
-  const pass = passInline || passEnv;
+  const passInline = SMTP_PASS.replace(/\s+/g, "").trim();
+  const pass = passEnv || passInline;
   return { user, pass };
 }
 
