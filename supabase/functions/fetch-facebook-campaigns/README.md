@@ -15,10 +15,11 @@ Syncs Facebook/Meta Ads campaign insights into Supabase (`facebook_campaigns_dat
 
 ## Invoke
 
-- **HTTP:** `POST /functions/v1/fetch-facebook-campaigns` with `Authorization: Bearer <anon or service_role key>`.
-- **Cron:** Optional migration `20250313120000_facebook_campaigns_sync_cron.sql` schedules daily sync at 03:00 UTC.
+- **Preferred:** `POST /functions/v1/fetch-facebook-campaigns-upsert` (Settings sync + daily cron).
+- **Legacy:** `POST /functions/v1/fetch-facebook-campaigns` — same upsert write path (no delete window).
+- **Cron:** Migration `20260719120000_fix_facebook_campaigns_sync_cron_to_upsert.sql` schedules daily sync at 03:00 UTC → upsert function.
 
 ## Data
 
-- Fetches ad-level insights for the last 2 days (yesterday and the day before).
-- Inserts into `facebook_campaigns_data` and new campaign names into `facebook_campaigns_reference_data`.
+- Fetches ad-level insights for the last ~2 full days (IST calendar, matching the daily spend email).
+- Upserts into `facebook_campaigns_data` and inserts new campaign names into `facebook_campaigns_reference_data`.

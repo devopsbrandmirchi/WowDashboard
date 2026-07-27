@@ -15,6 +15,7 @@ if ($t -eq 'sbp_...' -or $t -match '^\s*sbp_\.\.\.\s*$') {
 $functions = @(
     "sync-google-ads-upsert",
     "fetch-reddit-campaigns-upsert",
+    "fetch-facebook-campaigns",
     "fetch-facebook-campaigns-upsert",
     "fetch-tiktok-campaigns-upsert",
     "sync-microsoft-ads",

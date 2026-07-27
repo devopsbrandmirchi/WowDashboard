@@ -1,9 +1,7 @@
-// Sync Facebook/Meta Ads campaign data into Supabase via Graph API.
-// App ID/secret: facebook_ads_integration_settings (fb_app_id, fb_app_secret) or FB_APP_ID / FB_APP_SECRET secrets.
-// FB_ACCESS_TOKEN (user token), FB_AD_ACCOUNT_ID or FB_ACCOUNT_ID (act_xxx). SUPABASE_* auto-set on Edge.
-//
-// Tokens: Settings row access_token first, else FB_ACCESS_TOKEN secret, else app token.
-// Short-lived user tokens expire in ~1–2 hours; use a long-lived user or system user token with ads_read for cron.
+// Legacy Meta sync entrypoint. Prefer fetch-facebook-campaigns-upsert (daily cron + Settings).
+// Upserts into facebook_campaigns_data (never delete-then-insert).
+// App ID/secret: facebook_ads_integration_settings or FB_APP_ID / FB_APP_SECRET.
+// Token: settings access_token → FB_ACCESS_TOKEN → app token.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -149,7 +147,8 @@ function isRetryableMetaRateLimit(status: number, bodyText: string): boolean {
   if (status === 429) return true;
   const p = parseFacebookGraphError(bodyText);
   if (!p) return false;
-  if (p.code === 4 || p.code === 17 || p.code === 80004) return true;
+  // 2 = temporary Graph outage; 4/17/80004 = throttling
+  if (p.code === 2 || p.code === 4 || p.code === 17 || p.code === 80004) return true;
   return false;
 }
 
@@ -377,14 +376,22 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, serviceRoleKey);
     const graphToken = await resolveFacebookAccessToken(supabase);
 
-    // Last 5 full days ending yesterday (excludes incomplete today); delete+insert for that window refreshes metrics and drops stale rows
-    const now = new Date();
-    const dateTo = new Date(now);
-    dateTo.setDate(dateTo.getDate() - 1);
-    const dateFrom = new Date(now);
-    dateFrom.setDate(dateFrom.getDate() - 5);
-    const dateFromStr = dateFrom.toISOString().slice(0, 10);
-    const dateToStr = dateTo.toISOString().slice(0, 10);
+    // Last 5 full IST days ending yesterday (matches daily spend email calendar; upsert, no delete)
+    const todayIst = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const prevDay = (yyyyMmDd: string) => {
+      const [y, m, d] = yyyyMmDd.split("-").map((x) => parseInt(x, 10));
+      const u = new Date(Date.UTC(y, m - 1, d));
+      u.setUTCDate(u.getUTCDate() - 1);
+      return u.toISOString().slice(0, 10);
+    };
+    let dateToStr = prevDay(todayIst);
+    let dateFromStr = dateToStr;
+    for (let i = 0; i < 4; i++) dateFromStr = prevDay(dateFromStr);
 
     const fields = [
       "account_id",
@@ -407,13 +414,7 @@ Deno.serve(async (req: Request) => {
 
     const accountId = adAccountId.startsWith("act_") ? adAccountId : `act_${adAccountId}`;
 
-    await supabase
-      .from("facebook_campaigns_data")
-      .delete()
-      .gte("day", dateFromStr)
-      .lte("day", dateToStr)
-      .eq("account_id", accountId);
-
+    // Upsert only — never delete-then-insert (a Graph/token failure after delete wiped Meta days).
     const { error: seqErr } = await supabase.rpc("reset_facebook_campaigns_data_sequence");
     if (seqErr) console.warn("[fetch-facebook-campaigns] Identity sequence reset failed:", seqErr.message);
 
@@ -428,11 +429,14 @@ Deno.serve(async (req: Request) => {
     let insertedRowCount = 0;
     const campaignNamesSeen = new Set<string>();
 
-    const insertRows = async (rows: Record<string, unknown>[]) => {
+    const upsertRows = async (rows: Record<string, unknown>[]) => {
       for (let i = 0; i < rows.length; i += BATCH) {
         const chunk = rows.slice(i, i + BATCH).map(stripId);
-        const { error } = await supabase.from("facebook_campaigns_data").insert(chunk);
-        if (error) throw new Error(`facebook_campaigns_data insert: ${error.message}`);
+        const { error } = await supabase.from("facebook_campaigns_data").upsert(chunk, {
+          onConflict: "account_id,ad_id,day,platform,placement,device_platform",
+          ignoreDuplicates: false,
+        });
+        if (error) throw new Error(`facebook_campaigns_data upsert: ${error.message}`);
       }
     };
 
@@ -458,11 +462,11 @@ Deno.serve(async (req: Request) => {
           const n = (r.campaign_name as string)?.trim();
           if (n) campaignNamesSeen.add(n);
         }
-        await insertRows(uniqueChunkRows);
+        await upsertRows(uniqueChunkRows);
       }
     }
 
-    console.log("[fetch-facebook-campaigns] Insights raw:", rawInsightCount, "inserted rows:", insertedRowCount);
+    console.log("[fetch-facebook-campaigns] Insights raw:", rawInsightCount, "upserted rows:", insertedRowCount);
 
     const uniqueCampaignNames = [...campaignNamesSeen];
     if (uniqueCampaignNames.length > 0) {
@@ -488,7 +492,7 @@ Deno.serve(async (req: Request) => {
       account_id: accountId,
       date_from: dateFromStr,
       date_to: dateToStr,
-      inserted: { rows: insertedRowCount },
+      upserted: { rows: insertedRowCount },
     };
     console.log("[fetch-facebook-campaigns] Success", JSON.stringify(result));
     return new Response(JSON.stringify(result), {

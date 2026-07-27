@@ -8,6 +8,9 @@ verify_jwt = false
 [functions.fetch-reddit-campaigns-upsert]
 verify_jwt = false
 
+[functions.fetch-facebook-campaigns]
+verify_jwt = false
+
 [functions.fetch-facebook-campaigns-upsert]
 verify_jwt = false
 

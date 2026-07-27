@@ -63,7 +63,13 @@ function isRetryableMetaRateLimit(status: number, bodyJson: unknown): boolean {
   if (status === 429) return true;
   const oauthErr = getFacebookOAuthError(bodyJson);
   if (!oauthErr || oauthErr.code == null) return false;
-  return oauthErr.code === 4 || oauthErr.code === 17 || oauthErr.code === 80004;
+  // 2 = temporary Graph outage (often marked is_transient:false incorrectly); 4/17/80004 = throttling
+  return (
+    oauthErr.code === 2 ||
+    oauthErr.code === 4 ||
+    oauthErr.code === 17 ||
+    oauthErr.code === 80004
+  );
 }
 
 async function graphFetchWithRateLimitRetry(url: string): Promise<Response> {
@@ -286,13 +292,28 @@ function normalizeISODate(s: string): string | null {
   return isNaN(d.getTime()) ? null : t;
 }
 
+/** "Yesterday" in Asia/Kolkata — matches send-daily-ad-spend-email report date. */
+function calendarDateInTimeZone(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function previousCalendarDate(yyyyMmDd: string): string {
+  const [y, m, d] = yyyyMmDd.split("-").map((x) => parseInt(x, 10));
+  const u = new Date(Date.UTC(y, m - 1, d));
+  u.setUTCDate(u.getUTCDate() - 1);
+  return u.toISOString().slice(0, 10);
+}
+
 function defaultDateRange(): { from: string; to: string } {
-  const now = new Date();
-  const dateTo = new Date(now);
-  dateTo.setUTCDate(dateTo.getUTCDate() - 1);
-  const dateFrom = new Date(now);
-  dateFrom.setUTCDate(dateFrom.getUTCDate() - 2);
-  return { from: dateFrom.toISOString().slice(0, 10), to: dateTo.toISOString().slice(0, 10) };
+  const todayIst = calendarDateInTimeZone(new Date(), "Asia/Kolkata");
+  const dateTo = previousCalendarDate(todayIst);
+  const dateFrom = previousCalendarDate(dateTo);
+  return { from: dateFrom, to: dateTo };
 }
 
 function eachDateInRange(fromStr: string, toStr: string): string[] {
