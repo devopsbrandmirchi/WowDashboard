@@ -61,6 +61,13 @@ const REPORT_FIELDS = [
   "CONVERSION_ROAS",
 ];
 
+/** Next calendar day YYYY-MM-DD (UTC). Reddit report ends_at is exclusive. */
+function dayAfter(dateStr: string): string {
+  const d = new Date(`${dateStr}T12:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 async function fetchReport(
   accessToken: string,
   customerId: string,
@@ -73,10 +80,11 @@ async function fetchReport(
     "User-Agent": UA,
     "Content-Type": "application/json",
   };
+  // starts_at inclusive, ends_at exclusive — same midnight for both returns an empty window.
   const reqBody = {
     data: {
       starts_at: `${dateStr}T00:00:00Z`,
-      ends_at: `${dateStr}T00:00:00Z`,
+      ends_at: `${dayAfter(dateStr)}T00:00:00Z`,
       breakdowns,
       fields: REPORT_FIELDS,
     },
@@ -261,12 +269,28 @@ Deno.serve(async (req: Request) => {
     const dates = eachDateInRange(dateFromStr, dateToStr);
     const adGroupRows: Record<string, unknown>[] = [];
     const placementRows: Record<string, unknown>[] = [];
+    const perDate: Record<string, { ad_group_raw: number; placement_raw: number; sample_keys?: string[] }> = {};
+
+    /** Reddit may return date / starts_at / report_date depending on API version. */
+    function metricDate(r: Record<string, unknown>, fallback: string): string {
+      const raw = r.date ?? r.starts_at ?? r.report_date ?? r.day ?? fallback;
+      const s = String(raw ?? "").trim();
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+      return fallback;
+    }
 
     for (const dateStr of dates) {
+      perDate[dateStr] = { ad_group_raw: 0, placement_raw: 0 };
       try {
         const rows = await fetchReport(accessToken, accountId, dateStr, ["DATE", "CAMPAIGN_ID", "AD_GROUP_ID"]);
+        perDate[dateStr].ad_group_raw = rows.length;
+        if (rows.length > 0 && !perDate[dateStr].sample_keys) {
+          perDate[dateStr].sample_keys = Object.keys(rows[0]).slice(0, 20);
+          console.log(LOG, "sample ad_group row", dateStr, JSON.stringify(rows[0]).slice(0, 500));
+        }
         for (const r of rows) {
-          if (!r.date) continue;
           const cid = String(r.campaign_id ?? "");
           const agid = String(r.ad_group_id ?? "");
           adGroupRows.push({
@@ -274,7 +298,7 @@ Deno.serve(async (req: Request) => {
             country: null,
             campaign_name: campaignNames[cid] ?? null,
             ad_group_name: adGroupNames[agid] ?? null,
-            campaign_date: String(r.date).slice(0, 10),
+            campaign_date: metricDate(r, dateStr),
             impressions: num(r.impressions),
             clicks: num(r.clicks),
             amount_spent_usd: microDiv(r.spend),
@@ -289,14 +313,15 @@ Deno.serve(async (req: Request) => {
 
       try {
         const rows = await fetchReport(accessToken, accountId, dateStr, ["DATE", "CAMPAIGN_ID", "PLACEMENT"]);
+        perDate[dateStr].placement_raw = rows.length;
         for (const r of rows) {
-          if (!r.date || !r.placement) continue;
+          if (!r.placement) continue;
           const cid = String(r.campaign_id ?? "");
           placementRows.push({
             account_id: accountId,
             campaign_id: cid || null,
             placement: String(r.placement),
-            campaign_date: String(r.date).slice(0, 10),
+            campaign_date: metricDate(r, dateStr),
             impressions: num(r.impressions),
             clicks: num(r.clicks),
             amount_spent_usd: microDiv(r.spend),
@@ -383,6 +408,7 @@ Deno.serve(async (req: Request) => {
       date_from: dateFromStr,
       date_to: dateToStr,
       upserted: { ad_group_rows: dedupedAdGroup.length, placement_rows: dedupedPlacement.length },
+      per_date: perDate,
       sync_history_rows: hist.length,
       run_id: runId,
     };

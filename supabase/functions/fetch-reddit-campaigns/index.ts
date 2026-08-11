@@ -61,6 +61,13 @@ const REPORT_FIELDS = [
 ];
 
 /** Fetch report with pagination and 429 retry. */
+/** Next calendar day YYYY-MM-DD (UTC). Reddit report ends_at is exclusive. */
+function dayAfter(dateStr: string): string {
+  const d = new Date(`${dateStr}T12:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 async function fetchReport(
   accessToken: string,
   customerId: string,
@@ -73,10 +80,11 @@ async function fetchReport(
     "User-Agent": UA,
     "Content-Type": "application/json",
   };
+  // starts_at inclusive, ends_at exclusive — same midnight for both returns an empty window.
   const reqBody = {
     data: {
       starts_at: `${dateStr}T00:00:00Z`,
-      ends_at: `${dateStr}T00:00:00Z`,
+      ends_at: `${dayAfter(dateStr)}T00:00:00Z`,
       breakdowns,
       fields: REPORT_FIELDS,
     },

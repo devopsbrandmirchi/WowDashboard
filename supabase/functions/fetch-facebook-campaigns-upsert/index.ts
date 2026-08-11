@@ -26,9 +26,11 @@ class HttpError extends Error {
   }
 }
 
-function getFacebookOAuthError(json: unknown): { code: number | null; subcode: number | null; message: string } | null {
+function getFacebookOAuthError(
+  json: unknown
+): { code: number | null; subcode: number | null; message: string; isTransient: boolean } | null {
   if (!json || typeof json !== "object") return null;
-  const err = (json as { error?: { code?: unknown; error_subcode?: unknown } }).error;
+  const err = (json as { error?: { code?: unknown; error_subcode?: unknown; is_transient?: unknown } }).error;
   if (!err || typeof err !== "object") return null;
   const code = Number(err.code);
   const subcode = Number(err.error_subcode);
@@ -39,21 +41,25 @@ function getFacebookOAuthError(json: unknown): { code: number | null; subcode: n
     code: Number.isFinite(code) ? code : null,
     subcode: Number.isFinite(subcode) ? subcode : null,
     message,
+    isTransient: (err as { is_transient?: unknown }).is_transient === true,
   };
 }
 
-/** Meta insights throttling — space pages and retry OAuthException 4 / HTTP 429. */
+/** Meta insights throttling — space pages and retry OAuthException 4 / HTTP 429 / transient 500. */
 const GRAPH_PAGE_GAP_MS = 200;
-/** Edge runtime ~60s wall clock; long backoff sleeps cause 504 before Graph retries finish. */
+/** Edge runtime wall clock is limited; long backoff sleeps cause 504 before Graph retries finish. */
 const GRAPH_RATE_LIMIT_MAX_RETRIES = 8;
 const GRAPH_RATE_LIMIT_BASE_MS = 1_500;
 const GRAPH_RATE_LIMIT_CAP_MS = 10_000;
-/** Small windows keep each Insights job paginating less per request (critical under ~60s gateway limit). */
-const GRAPH_INSIGHTS_CHUNK_DAYS = 2;
-/** Fetch up to N non-overlapping date windows in parallel to cut wall-clock time (watch Meta rate limits). */
-const GRAPH_CHUNK_CONCURRENCY = 2;
-/** Pause between parallel batch rounds (not between pages of the same job). */
-const GRAPH_CHUNK_PAUSE_MS = 120;
+/**
+ * 1-day windows: ad + publisher_platform/platform_position breakdowns often hit Meta
+ * code 1 / subcode 99 (~60s unknown error) on multi-day sync Insights jobs (cron at 03:00 UTC).
+ */
+const GRAPH_INSIGHTS_CHUNK_DAYS = 1;
+/** Sequential chunks avoid stacking heavy Insights jobs (cron reliability > wall-clock speed). */
+const GRAPH_CHUNK_CONCURRENCY = 1;
+/** Pause between batch rounds (not between pages of the same job). */
+const GRAPH_CHUNK_PAUSE_MS = 250;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -61,10 +67,18 @@ function sleep(ms: number): Promise<void> {
 
 function isRetryableMetaRateLimit(status: number, bodyJson: unknown): boolean {
   if (status === 429) return true;
+  // Meta sometimes returns bare HTTP 5xx with empty/non-JSON body on overloaded Insights.
+  if (status >= 500 && status < 600 && bodyJson == null) return true;
   const oauthErr = getFacebookOAuthError(bodyJson);
-  if (!oauthErr || oauthErr.code == null) return false;
-  // 2 = temporary Graph outage (often marked is_transient:false incorrectly); 4/17/80004 = throttling
+  if (!oauthErr || oauthErr.code == null) {
+    return status >= 500 && status < 600;
+  }
+  if (oauthErr.isTransient) return true;
+  // 1 + subcode 99 = unknown / Insights timeout (common on heavy ad+breakdown sync calls)
+  // 2 = temporary Graph outage; 4/17/80004 = throttling
   return (
+    status >= 500 ||
+    oauthErr.code === 1 ||
     oauthErr.code === 2 ||
     oauthErr.code === 4 ||
     oauthErr.code === 17 ||
@@ -100,8 +114,11 @@ async function graphFetchWithRateLimitRetry(url: string): Promise<Response> {
       const exp = Math.min(GRAPH_RATE_LIMIT_CAP_MS, GRAPH_RATE_LIMIT_BASE_MS * 2 ** attempt);
       const jitter = Math.floor(Math.random() * 750);
       const waitMs = exp + jitter;
+      const reason = oauthErr
+        ? `code=${oauthErr.code} subcode=${oauthErr.subcode}`
+        : "no-body";
       console.warn(
-        `${LOG} Graph rate limit ${res.status}, waiting ${waitMs}ms (attempt ${attempt + 1}/${GRAPH_RATE_LIMIT_MAX_RETRIES})`
+        `${LOG} Graph retryable ${res.status} (${reason}), waiting ${waitMs}ms (attempt ${attempt + 1}/${GRAPH_RATE_LIMIT_MAX_RETRIES})`
       );
       await sleep(waitMs);
       continue;
