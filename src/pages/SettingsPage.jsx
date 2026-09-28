@@ -996,9 +996,11 @@ export function SettingsPage() {
                 connectDescription="Connect your Reddit Ads account to pull spend and conversion data into reports."
                 syncLogPlatform="reddit_ads"
                 onSync={async (dateFrom, dateTo) => {
+                  // Manual sync refreshes placements; daily cron skips placement (1 report call/day).
                   const { data, error } = await invokeEdgeFunction('fetch-reddit-campaigns-upsert', {
                     date_from: dateFrom,
                     date_to: dateTo,
+                    include_placement: true,
                   });
                   if (error) throw new Error(error.message || 'Edge function error');
                   if (data?.error) throw new Error(data.message || data.error);

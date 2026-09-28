@@ -1,6 +1,8 @@
 // Reddit Ads sync: upsert + reddit_ads_sync_by_date (original: fetch-reddit-campaigns).
 // Secrets: REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_REFRESH_TOKEN, REDDIT_ACCOUNT_ID.
-// POST { date_from?, date_to? } or GET ?date_from=&date_to= (default: last 2 days).
+// POST { date_from?, date_to?, include_placement? } or GET ?date_from=&date_to=&include_placement=
+// Default: last 2 UTC days, ad-group report only (1 Reddit reports call per day — used by cron).
+// Set include_placement=true for manual syncs that also refresh the Placements tab.
 // Requires migration 20250318200000_reddit_ads_upsert_sync_history.sql
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -138,9 +140,6 @@ function num(v: unknown): number | null {
   const n = Number(v);
   return isNaN(n) ? null : n;
 }
-function numOrZero(v: unknown): number {
-  return num(v) ?? 0;
-}
 function microDiv(v: unknown): number | null {
   const n = num(v);
   return n != null ? Math.round(n / 1e6 * 1e6) / 1e6 : null;
@@ -150,41 +149,23 @@ function centDiv(v: unknown): number | null {
   return n != null ? Math.round(n / 100 * 100) / 100 : null;
 }
 
+/** Collapse pagination / report duplicates. Last row wins — do not sum (summing doubles spend). */
 function dedupeAdGroupRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
   const map = new Map<string, Record<string, unknown>>();
   for (const r of rows) {
     const key =
       `${r.account_id}|${r.campaign_date}|${r.campaign_name ?? ""}|${r.ad_group_name ?? ""}|${r.country ?? ""}`;
-    const existing = map.get(key);
-    if (!existing) {
-      map.set(key, { ...r });
-      continue;
-    }
-    (existing.impressions as number) = numOrZero(existing.impressions) + numOrZero(r.impressions);
-    (existing.clicks as number) = numOrZero(existing.clicks) + numOrZero(r.clicks);
-    existing.amount_spent_usd = (num(existing.amount_spent_usd) ?? 0) + (num(r.amount_spent_usd) ?? 0);
-    (existing.purchase_view as number) = numOrZero(existing.purchase_view) + numOrZero(r.purchase_view);
-    (existing.purchase_click as number) = numOrZero(existing.purchase_click) + numOrZero(r.purchase_click);
-    existing.total_value_purchase = (num(existing.total_value_purchase) ?? 0) + (num(r.total_value_purchase) ?? 0);
+    map.set(key, { ...r });
   }
   return Array.from(map.values());
 }
 
+/** Collapse pagination / report duplicates. Last row wins — do not sum. */
 function dedupePlacementRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
   const map = new Map<string, Record<string, unknown>>();
   for (const r of rows) {
     const key = `${r.account_id}|${r.campaign_id}|${r.campaign_date}|${r.placement ?? ""}`;
-    const existing = map.get(key);
-    if (!existing) {
-      map.set(key, { ...r });
-      continue;
-    }
-    (existing.impressions as number) = numOrZero(existing.impressions) + numOrZero(r.impressions);
-    (existing.clicks as number) = numOrZero(existing.clicks) + numOrZero(r.clicks);
-    existing.amount_spent_usd = (num(existing.amount_spent_usd) ?? 0) + (num(r.amount_spent_usd) ?? 0);
-    (existing.purchase_view as number) = numOrZero(existing.purchase_view) + numOrZero(r.purchase_view);
-    (existing.purchase_click as number) = numOrZero(existing.purchase_click) + numOrZero(r.purchase_click);
-    existing.total_value_purchase = (num(existing.total_value_purchase) ?? 0) + (num(r.total_value_purchase) ?? 0);
+    map.set(key, { ...r });
   }
   return Array.from(map.values());
 }
@@ -224,6 +205,8 @@ Deno.serve(async (req: Request) => {
   try {
     let dateFromStr: string;
     let dateToStr: string;
+    /** Cron sends {} → false (1 reports call/day). Manual Settings sync can pass true. */
+    let includePlacement = false;
     const apply = (df: string | null, dt: string | null) => {
       if (df && dt) {
         if (df > dt) throw new Error("date_from must be on or before date_to");
@@ -232,6 +215,14 @@ Deno.serve(async (req: Request) => {
       }
       const d = defaultDateRange();
       return { from: d.from, to: d.to };
+    };
+    const parseIncludePlacement = (v: unknown): boolean => {
+      if (v === true || v === 1) return true;
+      if (typeof v === "string") {
+        const s = v.trim().toLowerCase();
+        return s === "1" || s === "true" || s === "yes";
+      }
+      return false;
     };
     if (req.method === "POST") {
       let body: Record<string, unknown> = {};
@@ -244,11 +235,13 @@ Deno.serve(async (req: Request) => {
       );
       dateFromStr = r.from;
       dateToStr = r.to;
+      includePlacement = parseIncludePlacement(body.include_placement);
     } else if (req.method === "GET") {
       const u = new URL(req.url);
       const r = apply(normalizeISODate(u.searchParams.get("date_from") || ""), normalizeISODate(u.searchParams.get("date_to") || ""));
       dateFromStr = r.from;
       dateToStr = r.to;
+      includePlacement = parseIncludePlacement(u.searchParams.get("include_placement"));
     } else {
       return new Response(JSON.stringify({ error: "method_not_allowed" }), {
         status: 405,
@@ -311,27 +304,31 @@ Deno.serve(async (req: Request) => {
         console.warn(LOG, "ad_group report", dateStr, e);
       }
 
-      try {
-        const rows = await fetchReport(accessToken, accountId, dateStr, ["DATE", "CAMPAIGN_ID", "PLACEMENT"]);
-        perDate[dateStr].placement_raw = rows.length;
-        for (const r of rows) {
-          if (!r.placement) continue;
-          const cid = String(r.campaign_id ?? "");
-          placementRows.push({
-            account_id: accountId,
-            campaign_id: cid || null,
-            placement: String(r.placement),
-            campaign_date: metricDate(r, dateStr),
-            impressions: num(r.impressions),
-            clicks: num(r.clicks),
-            amount_spent_usd: microDiv(r.spend),
-            purchase_view: num(r.conversion_purchase_views),
-            purchase_click: num(r.conversion_purchase_clicks),
-            total_value_purchase: centDiv(r.conversion_purchase_total_value),
-          });
+      if (includePlacement) {
+        try {
+          const rows = await fetchReport(accessToken, accountId, dateStr, ["DATE", "CAMPAIGN_ID", "PLACEMENT"]);
+          perDate[dateStr].placement_raw = rows.length;
+          for (const r of rows) {
+            if (!r.placement) continue;
+            const cid = String(r.campaign_id ?? "");
+            placementRows.push({
+              account_id: accountId,
+              campaign_id: cid || null,
+              placement: String(r.placement),
+              campaign_date: metricDate(r, dateStr),
+              impressions: num(r.impressions),
+              clicks: num(r.clicks),
+              amount_spent_usd: microDiv(r.spend),
+              purchase_view: num(r.conversion_purchase_views),
+              purchase_click: num(r.conversion_purchase_clicks),
+              total_value_purchase: centDiv(r.conversion_purchase_total_value),
+            });
+          }
+        } catch (e) {
+          console.warn(LOG, "placement report", dateStr, e);
         }
-      } catch (e) {
-        console.warn(LOG, "placement report", dateStr, e);
+      } else {
+        perDate[dateStr].placement_raw = 0;
       }
 
       if (dates.length > 1) await new Promise((r) => setTimeout(r, 1000));
@@ -345,6 +342,24 @@ Deno.serve(async (req: Request) => {
       const { id: _i, ...rest } = row;
       return rest;
     };
+
+    // Replace the synced window only after we have rows, so a failed/empty Reddit pull cannot wipe history.
+    if (dates.length > 0 && dedupedAdGroup.length > 0) {
+      const { error: delAgErr } = await supabase
+        .from("reddit_campaigns_ad_group")
+        .delete()
+        .eq("account_id", accountId)
+        .in("campaign_date", dates);
+      if (delAgErr) throw new Error(`reddit_campaigns_ad_group delete: ${delAgErr.message}`);
+    }
+    if (includePlacement && dates.length > 0 && dedupedPlacement.length > 0) {
+      const { error: delPlErr } = await supabase
+        .from("reddit_campaigns_placement")
+        .delete()
+        .eq("account_id", accountId)
+        .in("campaign_date", dates);
+      if (delPlErr) throw new Error(`reddit_campaigns_placement delete: ${delPlErr.message}`);
+    }
 
     for (let i = 0; i < dedupedAdGroup.length; i += BATCH) {
       const chunk = dedupedAdGroup.slice(i, i + BATCH).map(stripId);
@@ -385,7 +400,11 @@ Deno.serve(async (req: Request) => {
     }
 
     const runId = crypto.randomUUID();
-    const logMeta = { ad_group_rows: dedupedAdGroup.length, placement_rows: dedupedPlacement.length };
+    const logMeta = {
+      ad_group_rows: dedupedAdGroup.length,
+      placement_rows: dedupedPlacement.length,
+      include_placement: includePlacement,
+    };
     const logRows = hist.map((r) => ({
       platform: "reddit_ads",
       account_id: r.account_id,
@@ -407,6 +426,7 @@ Deno.serve(async (req: Request) => {
       account_id: accountId,
       date_from: dateFromStr,
       date_to: dateToStr,
+      include_placement: includePlacement,
       upserted: { ad_group_rows: dedupedAdGroup.length, placement_rows: dedupedPlacement.length },
       per_date: perDate,
       sync_history_rows: hist.length,

@@ -1,8 +1,8 @@
 // TikTok Ads: delete rows in date range + insert from TikTok report (no upsert / no sync log).
-// POST { date_from?, date_to? } or GET ?date_from=&date_to= — default last 3 calendar days (UTC), ending yesterday.
+// POST { date_from?, date_to? } or GET ?date_from=&date_to= — default last 7 calendar days (UTC), ending yesterday.
 // Env: TIKTOK_ACCESS_TOKEN, TIKTOK_ADVERTISER_ID. Optional: TIKTOK_API_URL.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 const LOG = "[fetch-tiktok-campaigns]";
 const CORS = {
@@ -55,7 +55,7 @@ function defaultDateRange(): { from: string; to: string } {
   const dateTo = new Date(now);
   dateTo.setUTCDate(dateTo.getUTCDate() - 1);
   const dateFrom = new Date(now);
-  dateFrom.setUTCDate(dateFrom.getUTCDate() - 3);
+  dateFrom.setUTCDate(dateFrom.getUTCDate() - 7);
   return { from: dateFrom.toISOString().slice(0, 10), to: dateTo.toISOString().slice(0, 10) };
 }
 
@@ -395,6 +395,224 @@ function rowToDb(
   };
 }
 
+interface CampaignDayTotal {
+  campaign_id: string;
+  date: string;
+  cost: number;
+  impressions: number;
+  clicks: number;
+}
+
+async function fetchCampaignDayTotals(
+  apiBase: string,
+  token: string,
+  advertiserId: string,
+  startDate: string,
+  endDate: string,
+): Promise<CampaignDayTotal[]> {
+  const out: CampaignDayTotal[] = [];
+  let page = 1;
+  let totalPage = 1;
+  do {
+    const u = new URL(`${apiBase.replace(/\/$/, "")}/report/integrated/get/`);
+    u.searchParams.set("advertiser_id", advertiserId);
+    u.searchParams.set("service_type", "AUCTION");
+    u.searchParams.set("report_type", "BASIC");
+    u.searchParams.set("data_level", "AUCTION_CAMPAIGN");
+    u.searchParams.set("start_date", startDate);
+    u.searchParams.set("end_date", endDate);
+    u.searchParams.set("page", String(page));
+    u.searchParams.set("page_size", "1000");
+    u.searchParams.set("dimensions", JSON.stringify(["stat_time_day", "campaign_id"]));
+    u.searchParams.set("metrics", JSON.stringify(METRICS_MIN));
+    const res = await fetch(u.toString(), { headers: { "Access-Token": token } });
+    const json = (await res.json()) as TikTokReportResponse;
+    if (json.code !== 0) throw new Error(`TikTok campaign report page ${page}: ${json.message}`);
+    for (const item of json.data?.list ?? []) {
+      const date = parseStatDay(item.dimensions?.stat_time_day);
+      const campaignId = str(item.dimensions?.campaign_id);
+      if (!date || !campaignId) continue;
+      out.push({
+        campaign_id: campaignId,
+        date,
+        cost: num(item.metrics?.spend) ?? 0,
+        impressions: int(item.metrics?.impressions) ?? 0,
+        clicks: int(item.metrics?.clicks) ?? 0,
+      });
+    }
+    totalPage = json.data?.page_info?.total_page ?? 1;
+    page++;
+  } while (page <= totalPage);
+  return out;
+}
+
+async function fetchCampaignNames(
+  apiBase: string,
+  token: string,
+  advertiserId: string,
+  campaignIds: string[],
+): Promise<Map<string, { campaign_name: string | null; objective_type: string | null }>> {
+  const map = new Map<string, { campaign_name: string | null; objective_type: string | null }>();
+  const unique = [...new Set(campaignIds)];
+  for (let i = 0; i < unique.length; i += 100) {
+    const u = new URL(`${apiBase.replace(/\/$/, "")}/campaign/get/`);
+    u.searchParams.set("advertiser_id", advertiserId);
+    u.searchParams.set("filtering", JSON.stringify({ campaign_ids: unique.slice(i, i + 100) }));
+    u.searchParams.set("page_size", "1000");
+    try {
+      const res = await fetch(u.toString(), { headers: { "Access-Token": token } });
+      const json = (await res.json()) as { code?: number; message?: string; data?: { list?: Record<string, unknown>[] } };
+      if (json.code !== 0) {
+        console.warn(LOG, "campaign/get", json.message);
+        continue;
+      }
+      for (const c of json.data?.list ?? []) {
+        const id = str(c.campaign_id);
+        if (id) map.set(id, { campaign_name: str(c.campaign_name), objective_type: str(c.objective_type) });
+      }
+    } catch (e) {
+      console.warn(LOG, "campaign/get", e);
+    }
+  }
+  return map;
+}
+
+/**
+ * The ad-level report omits delivery TikTok cannot attribute to an ad, so ad rows sum below
+ * the campaign and account totals shown in Ads Manager. Add one "(Campaign-level)" row per
+ * campaign/day holding that gap so day and campaign totals match Ads Manager.
+ */
+async function campaignGapRows(
+  apiBase: string,
+  token: string,
+  advertiserId: string,
+  totals: CampaignDayTotal[],
+  adRows: Record<string, unknown>[],
+  currency: string | null,
+): Promise<Record<string, unknown>[]> {
+  const adSums = new Map<string, { cost: number; impressions: number; clicks: number }>();
+  const names = new Map<string, { campaign_name: string | null; objective_type: string | null }>();
+  for (const r of adRows) {
+    const campaignId = str(r.campaign_id);
+    if (!campaignId) continue;
+    if (!names.has(campaignId)) {
+      names.set(campaignId, { campaign_name: str(r.campaign_name), objective_type: str(r.campaign_type) });
+    }
+    const k = `${campaignId}\0${r.date}`;
+    const s = adSums.get(k) ?? { cost: 0, impressions: 0, clicks: 0 };
+    s.cost += num(r.cost) ?? 0;
+    s.impressions += int(r.impressions) ?? 0;
+    s.clicks += int(r.clicks) ?? 0;
+    adSums.set(k, s);
+  }
+
+  const gaps = totals
+    .map((t) => {
+      const s = adSums.get(`${t.campaign_id}\0${t.date}`) ?? { cost: 0, impressions: 0, clicks: 0 };
+      return {
+        ...t,
+        cost: Math.max(0, Math.round((t.cost - s.cost) * 100) / 100),
+        impressions: Math.max(0, t.impressions - s.impressions),
+        clicks: Math.max(0, t.clicks - s.clicks),
+      };
+    })
+    .filter((g) => g.cost > 0 || g.impressions > 0 || g.clicks > 0);
+
+  const missingNames = gaps.map((g) => g.campaign_id).filter((id) => !names.get(id)?.campaign_name);
+  if (missingNames.length > 0) {
+    for (const [id, v] of await fetchCampaignNames(apiBase, token, advertiserId, missingNames)) names.set(id, v);
+  }
+
+  return gaps.map((g) => ({
+    campaign_name: names.get(g.campaign_id)?.campaign_name ?? null,
+    campaign_id: g.campaign_id,
+    campaign_type: names.get(g.campaign_id)?.objective_type ?? null,
+    ad_group_name: null,
+    ad_group_id: null,
+    ad_name: "(Campaign-level)",
+    ad_id: `campaign_${g.campaign_id}`,
+    creative_url: null,
+    date: g.date,
+    placement: null,
+    cost: g.cost,
+    cpm: g.impressions > 0 ? (g.cost / g.impressions) * 1000 : null,
+    impressions: g.impressions,
+    clicks: g.clicks,
+    ctr: g.impressions > 0 ? (g.clicks / g.impressions) * 100 : null,
+    conversions: null,
+    cost_per_conversion: null,
+    total_purchase: null,
+    purchase_roas: null,
+    currency,
+    country: null,
+    product_type: null,
+    show_event: null,
+  }));
+}
+
+/** Compare stored day totals with TikTok campaign-level totals and record the result per day. */
+async function reconcileDays(
+  supabase: SupabaseClient,
+  advertiserId: string,
+  startDate: string,
+  endDate: string,
+  totals: CampaignDayTotal[],
+): Promise<string[]> {
+  type DayTotals = { cost: number; impressions: number; clicks: number };
+  const add = (m: Map<string, DayTotals>, date: string, cost: number, impressions: number, clicks: number) => {
+    const t = m.get(date) ?? { cost: 0, impressions: 0, clicks: 0 };
+    t.cost += cost;
+    t.impressions += impressions;
+    t.clicks += clicks;
+    m.set(date, t);
+  };
+  const api = new Map<string, DayTotals>();
+  for (const t of totals) add(api, t.date, t.cost, t.impressions, t.clicks);
+
+  const db = new Map<string, DayTotals>();
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("tiktok_campaigns_data")
+      .select("id, date, cost, impressions, clicks")
+      .gte("date", startDate)
+      .lte("date", endDate)
+      .order("id")
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`tiktok_campaigns_data reconcile: ${error.message}`);
+    for (const r of data ?? []) {
+      add(db, String(r.date).slice(0, 10), num(r.cost) ?? 0, int(r.impressions) ?? 0, int(r.clicks) ?? 0);
+    }
+    if (!data || data.length < PAGE) break;
+  }
+
+  const checkedAt = new Date().toISOString();
+  const rows = eachDateInRange(startDate, endDate).map((date) => {
+    const a = api.get(date) ?? { cost: 0, impressions: 0, clicks: 0 };
+    const b = db.get(date) ?? { cost: 0, impressions: 0, clicks: 0 };
+    return {
+      platform: "tiktok",
+      account_id: advertiserId,
+      date,
+      api_cost: Math.round(a.cost * 100) / 100,
+      db_cost: Math.round(b.cost * 100) / 100,
+      api_impressions: a.impressions,
+      db_impressions: b.impressions,
+      api_clicks: a.clicks,
+      db_clicks: b.clicks,
+      matched: Math.abs(a.cost - b.cost) < 0.01 && a.impressions === b.impressions && a.clicks === b.clicks,
+      checked_at: checkedAt,
+    };
+  });
+  const mismatched = rows.filter((r) => !r.matched);
+  if (mismatched.length > 0) console.warn(LOG, "Day totals differ from campaign report:", JSON.stringify(mismatched));
+  const { error: upErr } = await supabase
+    .from("ads_daily_reconciliation")
+    .upsert(rows, { onConflict: "platform,account_id,date" });
+  if (upErr) console.warn(LOG, "ads_daily_reconciliation:", upErr.message);
+  return mismatched.map((r) => r.date);
+}
+
 Deno.serve(async (req: Request) => {
   console.log(LOG, new Date().toISOString());
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -468,9 +686,12 @@ Deno.serve(async (req: Request) => {
       const pl = r.placement != null ? String(r.placement) : "\0null";
       dedupe.set(`${r.ad_id}\0${r.date}\0${pl}`, r);
     }
-    const uniqueRows = [...dedupe.values()];
+    const adRows = [...dedupe.values()];
+    const campaignTotals = await fetchCampaignDayTotals(apiBase, token, advertiserId, dateFromStr, dateToStr);
+    const gapRows = await campaignGapRows(apiBase, token, advertiserId, campaignTotals, adRows, currency);
+    const uniqueRows = [...adRows, ...gapRows];
 
-    console.log(LOG, "report", rawList.length, "unique", uniqueRows.length);
+    console.log(LOG, "report", rawList.length, "unique", adRows.length, "campaign-level", gapRows.length);
 
     const supabase = createClient(getEnv("SUPABASE_URL"), getEnv("SUPABASE_SERVICE_ROLE_KEY"));
 
@@ -517,12 +738,15 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    const mismatchedDates = await reconcileDays(supabase, advertiserId, dateFromStr, dateToStr, campaignTotals);
+
     const result = {
       ok: true,
       advertiser_id: advertiserId,
       date_from: dateFromStr,
       date_to: dateToStr,
       inserted: { rows: uniqueRows.length },
+      mismatched_dates: mismatchedDates,
     };
     console.log(LOG, "Success", JSON.stringify(result));
     return new Response(JSON.stringify(result), {

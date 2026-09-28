@@ -23,7 +23,7 @@ const REPORTING_ENDPOINT =
   "https://reporting.api.bingads.microsoft.com/Api/Advertiser/Reporting/v13/ReportingService.svc";
 
 /** Default sync window: this many distinct calendar dates (UTC), ending on the last completed day (yesterday). */
-const DEFAULT_SYNC_DAY_COUNT = 3;
+const DEFAULT_SYNC_DAY_COUNT = 7;
 
 // ─── Env helpers ─────────────────────────────────────────────────────────────
 
@@ -427,6 +427,42 @@ function adGroupReportXml(accountId: string, from: Date, to: Date): string {
   </ReportRequest>`;
 }
 
+// CampaignPerformanceReportRequest covers ALL campaign types, including
+// Performance Max / Smart Shopping which never appear in AdGroupPerformanceReport
+// (those campaigns have asset groups, not traditional ad groups). We use this
+// to backfill campaign-level rows into microsoft_campaigns_ad_group so dashboard
+// totals reconcile with Microsoft Advertising's UI.
+// Derived-class WCF DataContract order: Aggregation, Columns, Filter, Scope, Time.
+function campaignReportXml(accountId: string, from: Date, to: Date): string {
+  return `<ReportRequest i:type="CampaignPerformanceReportRequest"
+    xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+    <Format>Csv</Format>
+    <Language>English</Language>
+    <ReportName>CampaignPerformanceReport</ReportName>
+    <ReturnOnlyCompleteData>false</ReturnOnlyCompleteData>
+    <Aggregation>Daily</Aggregation>
+    <Columns>
+      <CampaignPerformanceReportColumn>AccountId</CampaignPerformanceReportColumn>
+      <CampaignPerformanceReportColumn>CampaignId</CampaignPerformanceReportColumn>
+      <CampaignPerformanceReportColumn>CampaignName</CampaignPerformanceReportColumn>
+      <CampaignPerformanceReportColumn>Clicks</CampaignPerformanceReportColumn>
+      <CampaignPerformanceReportColumn>Conversions</CampaignPerformanceReportColumn>
+      <CampaignPerformanceReportColumn>Impressions</CampaignPerformanceReportColumn>
+      <CampaignPerformanceReportColumn>Revenue</CampaignPerformanceReportColumn>
+      <CampaignPerformanceReportColumn>Spend</CampaignPerformanceReportColumn>
+      <CampaignPerformanceReportColumn>TimePeriod</CampaignPerformanceReportColumn>
+      <CampaignPerformanceReportColumn>ViewThroughConversions</CampaignPerformanceReportColumn>
+    </Columns>
+    <Filter i:nil="true"/>
+    <Scope>
+      <AccountIds xmlns:a="http://schemas.microsoft.com/2003/10/Serialization/Arrays">
+        <a:long>${accountId}</a:long>
+      </AccountIds>
+    </Scope>
+    <Time>${buildDateRange(from, to)}</Time>
+  </ReportRequest>`;
+}
+
 // PublisherUsagePerformanceReportRequest derived order: Aggregation, Columns, Filter, Scope, Time
 function publisherReportXml(accountId: string, from: Date, to: Date): string {
   return `<ReportRequest i:type="PublisherUsagePerformanceReportRequest"
@@ -461,6 +497,13 @@ function publisherReportXml(accountId: string, from: Date, to: Date): string {
 
 // ─── Data transformers ────────────────────────────────────────────────────────
 
+/** Trim and coerce empty strings to null so the upsert key is consistent across syncs. */
+function normId(v: string | null | undefined): string | null {
+  if (v == null) return null;
+  const t = String(v).trim();
+  return t === "" ? null : t;
+}
+
 function toAdGroupRow(
   r: Record<string, string>,
   accountId: string
@@ -468,12 +511,12 @@ function toAdGroupRow(
   const campaign_date = parseMsDate(r["Time period"] ?? r["TimePeriod"] ?? r["Day"] ?? "");
   if (!campaign_date) return null;
   const spend = parseNum(r["Spend"] ?? r["spend"] ?? "");
-  const account_id = (r["Account ID"] ?? r["AccountId"] ?? accountId).trim();
+  const account_id = normId(r["Account ID"] ?? r["AccountId"] ?? accountId);
   return {
     account_id,
-    campaign_id: r["Campaign ID"] ?? r["CampaignId"] ?? null,
+    campaign_id: normId(r["Campaign ID"] ?? r["CampaignId"]),
     campaign_name: r["Campaign"] ?? r["CampaignName"] ?? null,
-    ad_group_id: r["Ad group ID"] ?? r["AdGroupId"] ?? null,
+    ad_group_id: normId(r["Ad group ID"] ?? r["AdGroupId"]),
     ad_group_name: r["Ad group"] ?? r["AdGroupName"] ?? null,
     campaign_date,
     impressions: parseNum(r["Impressions"] ?? "") ?? 0,
@@ -497,10 +540,10 @@ function toPlacementRow(
 ): Record<string, unknown> | null {
   const campaign_date = parseMsDate(r["Time period"] ?? r["TimePeriod"] ?? r["Day"] ?? "");
   if (!campaign_date) return null;
-  const account_id = (r["Account ID"] ?? r["AccountId"] ?? accountId).trim();
+  const account_id = normId(r["Account ID"] ?? r["AccountId"] ?? accountId);
   return {
     account_id,
-    campaign_id: r["Campaign ID"] ?? r["CampaignId"] ?? null,
+    campaign_id: normId(r["Campaign ID"] ?? r["CampaignId"]),
     campaign_date,
     name: r["Campaign"] ?? r["CampaignName"] ?? null,
     placement: r["Website"] ?? r["PublisherUrl"] ?? r["Ad distribution"] ?? r["AdDistribution"] ?? null,
@@ -510,6 +553,45 @@ function toPlacementRow(
     amount_spent_usd: parseNum(r["Spend"] ?? ""),
     purchase_click: parseNum(r["Conversions"] ?? r["All conv."] ?? ""),
     purchase_view: parseNum(r["View-through conv."] ?? r["ViewThroughConversions"] ?? ""),
+  };
+}
+
+/**
+ * Synthesize a campaign-level ad-group row from a CampaignPerformanceReport row.
+ * Used as a fallback for Performance Max / Smart Shopping campaigns which never
+ * appear in AdGroupPerformanceReport. ad_group_id / ad_group_name are set to
+ * NULL / a sentinel label so the campaign appears as a single (Pmax/campaign-level)
+ * row on the dashboard's Ad Groups tab while keeping totals correct.
+ */
+const CAMPAIGN_LEVEL_AD_GROUP_LABEL = "(Campaign-level)";
+
+function toCampaignFallbackRow(
+  r: Record<string, string>,
+  accountId: string
+): Record<string, unknown> | null {
+  const campaign_date = parseMsDate(r["Time period"] ?? r["TimePeriod"] ?? r["Day"] ?? "");
+  if (!campaign_date) return null;
+  const spend = parseNum(r["Spend"] ?? r["spend"] ?? "");
+  const account_id = normId(r["Account ID"] ?? r["AccountId"] ?? accountId);
+  return {
+    account_id,
+    campaign_id: normId(r["Campaign ID"] ?? r["CampaignId"]),
+    campaign_name: r["Campaign"] ?? r["CampaignName"] ?? null,
+    ad_group_id: null,
+    ad_group_name: CAMPAIGN_LEVEL_AD_GROUP_LABEL,
+    campaign_date,
+    impressions: parseNum(r["Impressions"] ?? "") ?? 0,
+    clicks: parseNum(r["Clicks"] ?? "") ?? 0,
+    amount_spent_usd: spend,
+    total_spent: spend,
+    purchase_click: parseNum(r["Conversions"] ?? r["All conv."] ?? ""),
+    total_purchase_click: parseNum(r["Conversions"] ?? r["All conv."] ?? ""),
+    purchase_view: parseNum(r["View-through conv."] ?? r["ViewThroughConversions"] ?? ""),
+    total_purchase_view: parseNum(r["View-through conv."] ?? r["ViewThroughConversions"] ?? ""),
+    total_value_purchase: parseNum(r["Revenue"] ?? r["Conv. value"] ?? ""),
+    total_records: 1,
+    unique_campaigns: null,
+    community: null,
   };
 }
 
@@ -625,46 +707,55 @@ Deno.serve(async (req: Request) => {
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    // ── Submit both reports concurrently ─────────────────────────────────
+    // ── Submit all three reports concurrently ────────────────────────────
+    // CampaignPerformanceReport is needed because AdGroupPerformanceReport excludes
+    // campaign types that have no traditional ad groups (Performance Max etc.).
     console.log("[sync-microsoft-ads] Submitting reports…");
-    const [adGroupReqId, publisherReqId] = await Promise.all([
+    const [adGroupReqId, publisherReqId, campaignReqId] = await Promise.all([
       submitReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId,
         adGroupReportXml(effectiveAccountId, dateFrom, dateTo)),
       submitReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId,
         publisherReportXml(effectiveAccountId, dateFrom, dateTo)),
+      submitReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId,
+        campaignReportXml(effectiveAccountId, dateFrom, dateTo)),
     ]);
     console.log(`[sync-microsoft-ads] AdGroup report ID: ${adGroupReqId}`);
     console.log(`[sync-microsoft-ads] Publisher report ID: ${publisherReqId}`);
+    console.log(`[sync-microsoft-ads] Campaign report ID: ${campaignReqId}`);
 
-    // ── Wait for both reports ────────────────────────────────────────────
+    // ── Wait for all three reports ───────────────────────────────────────
     console.log("[sync-microsoft-ads] Waiting for reports…");
-    const [adGroupUrl, publisherUrl] = await Promise.all([
+    const [adGroupUrl, publisherUrl, campaignUrl] = await Promise.all([
       waitForReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId, adGroupReqId, 110_000),
       waitForReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId, publisherReqId, 110_000),
+      waitForReport(accessToken, developerToken, effectiveCustomerId, effectiveAccountId, campaignReqId, 110_000),
     ]);
 
     // ── Download and parse ───────────────────────────────────────────────
     // null URL = empty report (no data for this date range) → treat as 0 rows
     console.log("[sync-microsoft-ads] Downloading reports…");
-    const [adGroupCsv, publisherCsv] = await Promise.all([
+    const [adGroupCsv, publisherCsv, campaignCsv] = await Promise.all([
       adGroupUrl  ? downloadReportCsv(adGroupUrl)  : Promise.resolve(""),
       publisherUrl ? downloadReportCsv(publisherUrl) : Promise.resolve(""),
+      campaignUrl  ? downloadReportCsv(campaignUrl)  : Promise.resolve(""),
     ]);
 
-    console.log(`[sync-microsoft-ads] AdGroup CSV length: ${adGroupCsv.length}, Publisher CSV length: ${publisherCsv.length}`);
+    console.log(`[sync-microsoft-ads] AdGroup CSV length: ${adGroupCsv.length}, Publisher CSV length: ${publisherCsv.length}, Campaign CSV length: ${campaignCsv.length}`);
 
     // ── CSV debug mode: return raw CSV for inspection ─────────────────────
     if (url.searchParams.get("csv_debug") === "true") {
       return new Response(JSON.stringify({
         adGroupCsvFirst1000: adGroupCsv.slice(0, 1000),
         publisherCsvFirst1000: publisherCsv.slice(0, 1000),
-        adGroupUrl, publisherUrl,
+        campaignCsvFirst1000: campaignCsv.slice(0, 1000),
+        adGroupUrl, publisherUrl, campaignUrl,
       }, null, 2), { headers: { ...CORS, "Content-Type": "application/json" } });
     }
 
     const adGroupRawRows = parseMsAdsCsv(adGroupCsv);
     const publisherRawRows = parseMsAdsCsv(publisherCsv);
-    console.log(`[sync-microsoft-ads] AdGroup rows: ${adGroupRawRows.length}, Publisher rows: ${publisherRawRows.length}`);
+    const campaignRawRows = parseMsAdsCsv(campaignCsv);
+    console.log(`[sync-microsoft-ads] AdGroup rows: ${adGroupRawRows.length}, Publisher rows: ${publisherRawRows.length}, Campaign rows: ${campaignRawRows.length}`);
     // Log the real account IDs returned by the API so MS_ADS_ACCOUNT_ID can be verified/corrected
     const realAccountIds = [...new Set(adGroupRawRows.map(r => r["Account ID"] ?? r["AccountId"]).filter(Boolean))];
     console.log(`[sync-microsoft-ads] Account IDs in report: ${JSON.stringify(realAccountIds)}`);
@@ -677,6 +768,31 @@ Deno.serve(async (req: Request) => {
       .map((r) => toAdGroupRow(r, effectiveAccountId))
       .filter((r): r is Record<string, unknown> => r !== null);
 
+    // Track which (campaign_id, campaign_date) pairs already have ad-group coverage
+    // so we only synthesize fallback rows for campaigns that AdGroupPerformanceReport
+    // genuinely omitted (Performance Max / Smart Shopping etc.).
+    const coveredCampaignDays = new Set<string>();
+    for (const r of adGroupRows) {
+      if (r.campaign_id && r.campaign_date) {
+        coveredCampaignDays.add(`${r.campaign_id}|${r.campaign_date}`);
+      }
+    }
+
+    const campaignFallbackRows = campaignRawRows
+      .map((r) => toCampaignFallbackRow(r, effectiveAccountId))
+      .filter((r): r is Record<string, unknown> => {
+        if (r === null) return false;
+        if (!r.campaign_id || !r.campaign_date) return false;
+        // Skip campaigns already represented by real ad-group rows.
+        return !coveredCampaignDays.has(`${r.campaign_id}|${r.campaign_date}`);
+      });
+
+    if (campaignFallbackRows.length > 0) {
+      const fallbackNames = [...new Set(campaignFallbackRows.map((r) => r.campaign_name as string).filter(Boolean))];
+      console.log(`[sync-microsoft-ads] Synthesized ${campaignFallbackRows.length} campaign-level fallback row(s) for campaigns absent from AdGroupPerformanceReport (e.g. Performance Max). Campaigns: ${JSON.stringify(fallbackNames)}`);
+      adGroupRows.push(...campaignFallbackRows);
+    }
+
     if (adGroupRows.length > 0) {
       const BATCH = 500;
       for (let i = 0; i < adGroupRows.length; i += BATCH) {
@@ -684,12 +800,41 @@ Deno.serve(async (req: Request) => {
         const { error } = await supabase
           .from("microsoft_campaigns_ad_group")
           .upsert(chunk, {
-            onConflict: "account_id,campaign_date,campaign_name,ad_group_name",
+            onConflict: "account_id,campaign_date,campaign_id,ad_group_id",
             ignoreDuplicates: false,
           });
         if (error) throw new Error(`microsoft_campaigns_ad_group upsert: ${error.message}`);
       }
       console.log(`[sync-microsoft-ads] Upserted ${adGroupRows.length} ad group rows.`);
+
+      // Rows from earlier syncs that the reports no longer return (a fallback row superseded by real
+      // ad groups, restated or removed ad groups) are untouched by the upsert and would inflate day totals.
+      const adGroupKey = (r: Record<string, unknown>) =>
+        `${r.account_id}|${r.campaign_date}|${r.campaign_id}|${r.ad_group_id}`;
+      const freshKeys = new Set(adGroupRows.map(adGroupKey));
+      const syncedAccountIds = [...new Set(adGroupRows.map((r) => r.account_id as string).filter(Boolean))];
+      const staleIds: number[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase
+          .from("microsoft_campaigns_ad_group")
+          .select("id, account_id, campaign_date, campaign_id, ad_group_id")
+          .in("account_id", syncedAccountIds)
+          .gte("campaign_date", dateFromStr)
+          .lte("campaign_date", dateToStr)
+          .order("id")
+          .range(from, from + 999);
+        if (error) throw new Error(`microsoft_campaigns_ad_group stale lookup: ${error.message}`);
+        for (const r of data ?? []) if (!freshKeys.has(adGroupKey(r))) staleIds.push(r.id);
+        if (!data || data.length < 1000) break;
+      }
+      for (let i = 0; i < staleIds.length; i += BATCH) {
+        const { error } = await supabase
+          .from("microsoft_campaigns_ad_group")
+          .delete()
+          .in("id", staleIds.slice(i, i + BATCH));
+        if (error) throw new Error(`microsoft_campaigns_ad_group stale delete: ${error.message}`);
+      }
+      if (staleIds.length > 0) console.log(`[sync-microsoft-ads] Deleted ${staleIds.length} stale ad group row(s).`);
 
       // Sync reference data (new campaigns only)
       const uniqueCampaigns = [...new Set(
@@ -754,11 +899,93 @@ Deno.serve(async (req: Request) => {
       console.log(`[sync-microsoft-ads] Upserted ${placementRows.length} placement rows.`);
     }
 
-    // ── Record sync log ──────────────────────────────────────────────────
     const syncDates: string[] = [];
     for (let d = new Date(dateFrom); d <= dateTo; d.setUTCDate(d.getUTCDate() + 1)) {
       syncDates.push(d.toISOString().slice(0, 10));
     }
+
+    // ── Reconcile stored day totals against CampaignPerformanceReport ────
+    type DayTotals = { cost: number; impressions: number; clicks: number };
+    const emptyTotals = (): DayTotals => ({ cost: 0, impressions: 0, clicks: 0 });
+    const addTo = (m: Map<string, DayTotals>, date: string, r: Record<string, unknown>) => {
+      const t = m.get(date) ?? emptyTotals();
+      t.cost += Number(r.amount_spent_usd) || 0;
+      t.impressions += Number(r.impressions) || 0;
+      t.clicks += Number(r.clicks) || 0;
+      m.set(date, t);
+    };
+    const apiByDate = new Map<string, DayTotals>();
+    for (const r of campaignRawRows) {
+      const row = toCampaignFallbackRow(r, effectiveAccountId);
+      if (row) addTo(apiByDate, row.campaign_date as string, row);
+    }
+    const dbByDate = new Map<string, DayTotals>();
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from("microsoft_campaigns_ad_group")
+        .select("id, campaign_date, amount_spent_usd, impressions, clicks")
+        .eq("account_id", effectiveAccountId)
+        .gte("campaign_date", dateFromStr)
+        .lte("campaign_date", dateToStr)
+        .order("id")
+        .range(from, from + 999);
+      if (error) throw new Error(`microsoft_campaigns_ad_group reconcile: ${error.message}`);
+      for (const r of data ?? []) addTo(dbByDate, String(r.campaign_date).slice(0, 10), r);
+      if (!data || data.length < 1000) break;
+    }
+    const reconciliation = syncDates.map((date) => {
+      const a = apiByDate.get(date) ?? emptyTotals();
+      const b = dbByDate.get(date) ?? emptyTotals();
+      return {
+        platform: "microsoft_ads",
+        account_id: effectiveAccountId,
+        date,
+        api_cost: Math.round(a.cost * 100) / 100,
+        db_cost: Math.round(b.cost * 100) / 100,
+        api_impressions: a.impressions,
+        db_impressions: b.impressions,
+        api_clicks: a.clicks,
+        db_clicks: b.clicks,
+        matched: Math.abs(a.cost - b.cost) < 0.01 && a.impressions === b.impressions && a.clicks === b.clicks,
+        checked_at: new Date().toISOString(),
+      };
+    });
+    const mismatchedDates = reconciliation.filter((r) => !r.matched);
+    if (mismatchedDates.length > 0) {
+      const badDates = new Set(mismatchedDates.map((r) => r.date));
+      const byCampaign = new Map<string, { api: DayTotals; rows: DayTotals; name: unknown }>();
+      const campaignEntry = (r: Record<string, unknown>) => {
+        const k = `${r.campaign_date}|${r.campaign_id}`;
+        const e = byCampaign.get(k) ?? { api: emptyTotals(), rows: emptyTotals(), name: r.campaign_name };
+        byCampaign.set(k, e);
+        return e;
+      };
+      const addMetrics = (t: DayTotals, r: Record<string, unknown>) => {
+        t.cost += Number(r.amount_spent_usd) || 0;
+        t.impressions += Number(r.impressions) || 0;
+        t.clicks += Number(r.clicks) || 0;
+      };
+      for (const r of campaignRawRows) {
+        const row = toCampaignFallbackRow(r, effectiveAccountId);
+        if (row && badDates.has(row.campaign_date as string)) addMetrics(campaignEntry(row).api, row);
+      }
+      for (const row of adGroupRows) {
+        if (badDates.has(row.campaign_date as string)) addMetrics(campaignEntry(row).rows, row);
+      }
+      const campaignDiffs = [...byCampaign.entries()]
+        .filter(([, e]) =>
+          Math.abs(e.api.cost - e.rows.cost) >= 0.01 ||
+          e.api.impressions !== e.rows.impressions ||
+          e.api.clicks !== e.rows.clicks)
+        .map(([k, e]) => ({ key: k, campaign: e.name, campaign_report: e.api, ad_group_rows: e.rows }));
+      console.warn(`[sync-microsoft-ads] Day totals differ from CampaignPerformanceReport: ${JSON.stringify(mismatchedDates)} by campaign: ${JSON.stringify(campaignDiffs)}`);
+    }
+    const { error: reconErr } = await supabase
+      .from("ads_daily_reconciliation")
+      .upsert(reconciliation, { onConflict: "platform,account_id,date" });
+    if (reconErr) console.warn("[sync-microsoft-ads] ads_daily_reconciliation:", reconErr.message);
+
+    // ── Record sync log ──────────────────────────────────────────────────
     const syncLogRows = syncDates.map((segment_date) => ({
       account_id: effectiveAccountId,
       segment_date,
@@ -801,8 +1028,10 @@ Deno.serve(async (req: Request) => {
       date_to: dateToStr,
       upserted: {
         ad_group_rows: adGroupRows.length,
+        ad_group_rows_from_campaign_fallback: campaignFallbackRows.length,
         placement_rows: placementRows.length,
       },
+      mismatched_dates: mismatchedDates.map((r) => r.date),
     };
     console.log("[sync-microsoft-ads] Done", JSON.stringify(result));
     return new Response(JSON.stringify(result), {
