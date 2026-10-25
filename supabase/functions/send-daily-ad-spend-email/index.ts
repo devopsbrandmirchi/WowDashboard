@@ -11,6 +11,8 @@
 // Requires migration: 20260505140000_daily_ad_spend_email_rpc_and_cron.sql
 //
 // Manual test: POST {} or POST {"report_date":"2026-05-04"}
+// Meta token warning: daily run also emails META_TOKEN_EXPIRY_EMAIL_TO when the token expires today or within 2 IST days.
+// Check only: POST {"check":"meta_token_expiry"}
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -33,6 +35,12 @@ const SMTP_PORT = 587;
 const SMTP_SECURE = false;
 /** Recipient for missing data alerts (comma-separated). */
 const DAILY_SPEND_ALERT_EMAIL_TO = "kiran@brandmirchi.com,darshna@chipperdigital.io";
+/**
+ * Meta token warning. Sent when the token's IST expiry date is today or within the next 2 days.
+ * Optional Edge secret META_TOKEN_EXPIRY_EMAIL_TO overrides this list.
+ */
+const META_TOKEN_EXPIRY_EMAIL_TO = "koushik@brandmirchi.com,kiran@brandmirchi.com,darshna@chipperdigital.io";
+const META_TOKEN_EXPIRY_WARN_DAYS = 2;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -156,6 +164,153 @@ function escapeHtml(s: string): string {
     .replaceAll('"', "&quot;");
 }
 
+function calendarDaysBetween(fromYmd: string, toYmd: string): number {
+  const from = Date.parse(`${fromYmd}T00:00:00Z`);
+  const to = Date.parse(`${toYmd}T00:00:00Z`);
+  return Math.round((to - from) / 86_400_000);
+}
+
+function formatIst(date: Date): string {
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: REPORT_TIMEZONE,
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+type MetaTokenExpiry = {
+  checked: boolean;
+  is_valid: boolean | null;
+  never_expires: boolean;
+  days_left: number | null;
+  expires_at: string | null;
+  expires_at_ist: string | null;
+  warn: boolean;
+  error?: string;
+};
+
+/** Settings token, then FB_ACCESS_TOKEN. App id/secret from Settings, then Edge secrets. */
+async function inspectMetaTokenExpiry(
+  supabase: ReturnType<typeof createClient>,
+): Promise<MetaTokenExpiry> {
+  const empty: MetaTokenExpiry = {
+    checked: false,
+    is_valid: null,
+    never_expires: false,
+    days_left: null,
+    expires_at: null,
+    expires_at_ist: null,
+    warn: false,
+  };
+  const { data, error } = await supabase
+    .from("facebook_ads_integration_settings")
+    .select("access_token, fb_app_id, fb_app_secret")
+    .eq("id", 1)
+    .maybeSingle();
+  if (error) return { ...empty, error: error.message };
+
+  const dbToken = data?.access_token != null ? String(data.access_token).trim() : "";
+  const token = dbToken.length >= 20 ? dbToken : (Deno.env.get("FB_ACCESS_TOKEN")?.trim() || "");
+  const appId = (data?.fb_app_id != null ? String(data.fb_app_id).trim() : "") ||
+    Deno.env.get("FB_APP_ID")?.trim() || "";
+  const appSecret = (data?.fb_app_secret != null ? String(data.fb_app_secret).trim() : "") ||
+    Deno.env.get("FB_APP_SECRET")?.trim() || "";
+  if (!token || !appId || !appSecret) {
+    return { ...empty, error: "Missing Meta token or app credentials" };
+  }
+
+  const url = "https://graph.facebook.com/v19.0/debug_token?input_token=" +
+    encodeURIComponent(token) +
+    "&access_token=" +
+    encodeURIComponent(`${appId}|${appSecret}`);
+  const res = await fetch(url);
+  const json = await res.json().catch(() => ({})) as {
+    error?: { message?: string };
+    data?: { is_valid?: boolean; expires_at?: number; error?: { message?: string } };
+  };
+  if (!res.ok || json.error) {
+    return { ...empty, error: json.error?.message || `debug_token HTTP ${res.status}` };
+  }
+  const info = json.data ?? {};
+  if (info.is_valid === false) {
+    return {
+      ...empty,
+      checked: true,
+      is_valid: false,
+      error: info.error?.message || "Meta access token is not valid",
+    };
+  }
+  const expiresAtSec = Number(info.expires_at ?? 0);
+  if (!Number.isFinite(expiresAtSec) || expiresAtSec <= 0) {
+    return { ...empty, checked: true, is_valid: true, never_expires: true };
+  }
+  const expiry = new Date(expiresAtSec * 1000);
+  const todayIst = calendarDateInTimeZone(new Date(), REPORT_TIMEZONE);
+  const expiryIst = calendarDateInTimeZone(expiry, REPORT_TIMEZONE);
+  const daysLeft = calendarDaysBetween(todayIst, expiryIst);
+  return {
+    checked: true,
+    is_valid: true,
+    never_expires: false,
+    days_left: daysLeft,
+    expires_at: expiry.toISOString(),
+    expires_at_ist: formatIst(expiry),
+    warn: daysLeft >= 0 && daysLeft <= META_TOKEN_EXPIRY_WARN_DAYS,
+  };
+}
+
+function renderMetaTokenExpiryHtml(params: { daysLeft: number; expiresAtIst: string }): string {
+  const when = params.daysLeft === 0
+    ? "today"
+    : params.daysLeft === 1
+    ? "in 1 day"
+    : `in ${params.daysLeft} days`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<body style="margin:0;padding:20px;background:#f5f7fa;font-family:Segoe UI,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:auto;background:#ffffff;border:1px solid #d9e2ec;border-radius:8px;">
+    <tr>
+      <td style="padding:18px 20px;background:#e67700;color:#ffffff;font-size:18px;font-weight:700;">
+        Meta access token expires ${escapeHtml(when)}
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:16px 20px;color:#102a43;font-size:14px;line-height:1.6;">
+        <p style="margin:0 0 12px;">The Facebook / Meta token used by the daily ads sync expires <strong>${escapeHtml(when)}</strong> (${escapeHtml(params.expiresAtIst)} IST).</p>
+        <p style="margin:0 0 12px;">Generate a new user or system-user token with <strong>ads_read</strong> and save it as the <strong>FB_ACCESS_TOKEN</strong> Edge secret before that time. After it expires, Meta Performance stops updating.</p>
+        <p style="margin:0;">Ad account <strong>114810198697538</strong>.</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+async function maybeSendMetaTokenExpiryEmail(
+  supabase: ReturnType<typeof createClient>,
+  from: string,
+): Promise<MetaTokenExpiry & { email_sent: boolean; recipients: string[]; smtp_message_id?: string | null }> {
+  const expiry = await inspectMetaTokenExpiry(supabase);
+  const base = { ...expiry, email_sent: false, recipients: [] as string[] };
+  if (!expiry.warn || expiry.days_left == null || !expiry.expires_at_ist) return base;
+
+  const toRaw = Deno.env.get("META_TOKEN_EXPIRY_EMAIL_TO")?.trim() || META_TOKEN_EXPIRY_EMAIL_TO.trim();
+  const to = toRaw.split(",").map((s) => s.trim()).filter(Boolean);
+  if (to.length === 0) return { ...base, error: "META_TOKEN_EXPIRY_EMAIL_TO has no valid addresses" };
+
+  const daysLeft = expiry.days_left;
+  const subject = daysLeft === 0
+    ? `Meta access token expires today — ${expiry.expires_at_ist} IST`
+    : `Meta access token expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"} — ${expiry.expires_at_ist} IST`;
+  const sent = await sendViaSmtp({
+    from,
+    to,
+    subject,
+    html: renderMetaTokenExpiryHtml({ daysLeft, expiresAtIst: expiry.expires_at_ist }),
+  });
+  return { ...base, email_sent: true, recipients: to, smtp_message_id: sent.messageId ?? null };
+}
+
 function renderMissingDataAlertHtml(params: {
   reportDate: string;
   missingPlatforms: string[];
@@ -217,10 +372,10 @@ Deno.serve(async (req: Request) => {
       }, 500);
     }
 
-    let body: { report_date?: string } = {};
+    let body: { report_date?: string; check?: string } = {};
     if (req.method === "POST") {
       try {
-        body = await req.json() as { report_date?: string };
+        body = await req.json() as { report_date?: string; check?: string };
       } catch {
         body = {};
       }
@@ -231,6 +386,14 @@ Deno.serve(async (req: Request) => {
       : defaultReportDate();
 
     const supabase = createClient(supabaseUrl, serviceKey);
+    const { user: smtpMailbox } = resolvedSmtpAuth();
+    const from = Deno.env.get("DAILY_SPEND_EMAIL_FROM")?.trim() ||
+      (smtpMailbox ? `WowDashboard <${smtpMailbox}>` : "WowDashboard <noreply@localhost>");
+
+    if (body.check === "meta_token_expiry") {
+      const tokenExpiry = await maybeSendMetaTokenExpiryEmail(supabase, from);
+      return jsonRes({ ok: true, email_type: "meta_token_expiry", ...tokenExpiry });
+    }
     const { data: raw, error: rpcError } = await supabase.rpc("get_daily_platform_spend_usd", {
       p_report_date: reportDate,
     });
@@ -301,10 +464,6 @@ Deno.serve(async (req: Request) => {
     const ccRaw = Deno.env.get("DAILY_SPEND_EMAIL_CC")?.trim() || DAILY_SPEND_EMAIL_CC.trim();
     const cc = ccRaw.split(",").map((s) => s.trim()).filter(Boolean);
 
-    const { user: smtpMailbox } = resolvedSmtpAuth();
-    const from = Deno.env.get("DAILY_SPEND_EMAIL_FROM")?.trim() ||
-      (smtpMailbox ? `WowDashboard <${smtpMailbox}>` : "WowDashboard <noreply@localhost>");
-
     const html = isMissingDataAlert
       ? renderMissingDataAlertHtml({
         reportDate: spend.report_date,
@@ -339,6 +498,22 @@ Deno.serve(async (req: Request) => {
       to,
     });
 
+    let metaTokenExpiry: (MetaTokenExpiry & { email_sent: boolean; recipients: string[] }) | { email_sent: false; error: string } =
+      { email_sent: false, error: "not_checked" };
+    try {
+      metaTokenExpiry = await maybeSendMetaTokenExpiryEmail(supabase, from);
+      if (metaTokenExpiry.email_sent) {
+        console.log("[send-daily-ad-spend-email] META TOKEN EXPIRY EMAIL SENT", {
+          days_left: "days_left" in metaTokenExpiry ? metaTokenExpiry.days_left : null,
+          recipients: metaTokenExpiry.recipients,
+        });
+      }
+    } catch (tokenErr) {
+      const tokenMsg = tokenErr instanceof Error ? tokenErr.message : String(tokenErr);
+      console.error("[send-daily-ad-spend-email] META TOKEN EXPIRY EMAIL NOT SENT —", tokenMsg);
+      metaTokenExpiry = { email_sent: false, error: tokenMsg };
+    }
+
     return jsonRes({
       email_sent: true,
       ok: true,
@@ -350,6 +525,7 @@ Deno.serve(async (req: Request) => {
       missing_platforms: missingPlatforms,
       platform_row_counts: rowCountChecks,
       spend: { ...spend, total_all_platforms: total },
+      meta_token_expiry: metaTokenExpiry,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
