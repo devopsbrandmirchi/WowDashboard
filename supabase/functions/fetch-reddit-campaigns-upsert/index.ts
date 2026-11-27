@@ -321,13 +321,24 @@ function centDiv(v: unknown): number | null {
   return n != null ? Math.round(n / 100 * 100) / 100 : null;
 }
 
-/** Collapse pagination / report duplicates. Last row wins — do not sum (summing doubles spend). */
+/** Fold rows that share the table's name key. Hours are already summed by ad group id, so two ids with the same name must be added — replacing one drops its spend. */
 function dedupeAdGroupRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
   const map = new Map<string, Record<string, unknown>>();
+  const add = (a: unknown, b: unknown) => (Number(a) || 0) + (Number(b) || 0);
   for (const r of rows) {
     const key =
       `${r.account_id}|${r.campaign_date}|${r.campaign_name ?? ""}|${r.ad_group_name ?? ""}|${r.country ?? ""}`;
-    map.set(key, { ...r });
+    const prev = map.get(key);
+    if (!prev) {
+      map.set(key, { ...r });
+      continue;
+    }
+    prev.impressions = add(prev.impressions, r.impressions);
+    prev.clicks = add(prev.clicks, r.clicks);
+    prev.amount_spent_usd = add(prev.amount_spent_usd, r.amount_spent_usd);
+    prev.purchase_view = add(prev.purchase_view, r.purchase_view);
+    prev.purchase_click = add(prev.purchase_click, r.purchase_click);
+    prev.total_value_purchase = add(prev.total_value_purchase, r.total_value_purchase);
   }
   return Array.from(map.values());
 }

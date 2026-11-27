@@ -30,6 +30,8 @@ function splitIsoDateRangeIntoChunks(dateFromStr, dateToStr, maxDaysPerChunk) {
 }
 
 const META_EDGE_SYNC_CHUNK_DAYS = 10;
+/** With placements, a full month in one Edge call runs out of memory (HTTP 546) before it can respond. */
+const REDDIT_EDGE_SYNC_CHUNK_DAYS = 5;
 
 function formatSyncLogStats(platform, meta) {
   if (!meta || typeof meta !== 'object') return '—';
@@ -1002,33 +1004,36 @@ export function SettingsPage() {
                   // Daily cron skips placement and only asks for three days, so it stays one call.
                   const results = [];
                   const failures = [];
-                  let cursor = dateFrom;
                   let guard = 0;
-                  while (cursor && cursor <= dateTo && guard++ < 400) {
-                    const { data, error } = await invokeEdgeFunction('fetch-reddit-campaigns-upsert', {
-                      date_from: cursor,
-                      date_to: dateTo,
-                      include_placement: true,
-                    });
-                    if (error) throw new Error(error.message || 'Edge function error');
-                    if (data?.error) throw new Error(data.message || data.error);
-                    results.push(data);
-                    for (const [date, day] of Object.entries(data?.per_date ?? {})) {
-                      if (day && typeof day === 'object' && day.error) failures.push(`${date}: ${day.error}`);
+                  const ranges = splitIsoDateRangeIntoChunks(dateFrom, dateTo, REDDIT_EDGE_SYNC_CHUNK_DAYS);
+                  for (const range of ranges) {
+                    let cursor = range.date_from;
+                    while (cursor && cursor <= range.date_to && guard++ < 400) {
+                      const { data, error } = await invokeEdgeFunction('fetch-reddit-campaigns-upsert', {
+                        date_from: cursor,
+                        date_to: range.date_to,
+                        include_placement: true,
+                      });
+                      if (error) throw new Error(error.message || 'Edge function error');
+                      if (data?.error) throw new Error(data.message || data.error);
+                      results.push(data);
+                      for (const [date, day] of Object.entries(data?.per_date ?? {})) {
+                        if (day && typeof day === 'object' && day.error) failures.push(`${date}: ${day.error}`);
+                      }
+                      if (data?.partial && data.next_date && data.next_date > cursor && data.next_date <= range.date_to) {
+                        showNotification(`Reddit Ads synced through ${data.synced_through || cursor}. Continuing…`);
+                        cursor = data.next_date;
+                        continue;
+                      }
+                      if (data?.partial) {
+                        failures.push(
+                          data.synced_through
+                            ? `Saved through ${data.synced_through}, then stopped at ${data.next_date || cursor}.`
+                            : `Could not finish ${cursor} before the time limit.`
+                        );
+                      }
+                      break;
                     }
-                    if (data?.partial && data.next_date && data.next_date > cursor && data.next_date <= dateTo) {
-                      showNotification(`Reddit Ads synced through ${data.synced_through || cursor}. Continuing…`);
-                      cursor = data.next_date;
-                      continue;
-                    }
-                    if (data?.partial) {
-                      failures.push(
-                        data.synced_through
-                          ? `Saved through ${data.synced_through}, then stopped at ${data.next_date || cursor}.`
-                          : `Could not finish ${cursor} before the time limit.`
-                      );
-                    }
-                    break;
                   }
                   if (failures.length) {
                     const err = new Error(failures[0]);
